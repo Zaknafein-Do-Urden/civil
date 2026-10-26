@@ -27,6 +27,8 @@ npm run dev
 npm run experiment -- --seed demo --years 200 --presets primitive,liberal,planned --out results.csv
 ```
 
+可选：`--params punishment=0,dunbar=100` 覆盖机制系数；`--grant agriculture,pottery` 让世界一开始就掌握这些科技（用于校准）。
+
 ## 开发
 
 ```bash

@@ -4,6 +4,7 @@ import { clamp, season } from './dmath';
 import { ALLOC, D, DIST, LAND, OCCSEL, SPEECH, TAX_RATES } from './rules';
 import { has } from './tech';
 import { personById } from './person';
+import { decideHours, growingFactor, repShare } from './labor';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, NOCC, NO_OCC, OCC } from './types';
 import type { Person, Settlement, World } from './types';
@@ -22,6 +23,8 @@ const ABILITY_W: number[][] = [
 ];
 
 const FOOD_OCCS = [OCC.gather, OCC.hunt, OCC.fish, OCC.farm, OCC.herd];
+/** Growing-season factor below which farmers have nothing to do in the fields. */
+export const OFF_SEASON = 0.1;
 
 export function ageDays(world: World, p: Person): number {
   return world.day - p.birth;
@@ -57,6 +60,11 @@ export function toolDurability(world: World): number {
 export function toolMultiplier(world: World, p: Person): number {
   const bonus = world.params.toolBonus * (has(world, 'copper') ? 1.5 : 1) * (has(world, 'bronze') ? 1.5 : 1);
   return 1 + bonus * p.toolCond;
+}
+
+/** Share of stored food that spoils each day. */
+export function foodDecayRate(world: World): number {
+  return world.params.foodDecay * (has(world, 'pottery') ? 0.4 : 1);
 }
 
 export function taxRate(s: Settlement): number {
@@ -105,7 +113,7 @@ function harvest(world: World, s: Settlement, key: 'plants' | 'game' | 'fish', a
   for (const id of s.territory) world.map.tiles[id][key] *= 1 - f;
 }
 
-/** Expected daily output value (food units) per unit of aptitude, per occupation, in this settlement. */
+/** Expected output value (food units) per working hour per unit of aptitude, per occupation, in this settlement. */
 export function occYield(world: World, s: Settlement): number[] {
   const P = world.params;
   const y = new Array<number>(NOCC).fill(0);
@@ -193,25 +201,58 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   const treasury = world.polity.treasury;
   const acc = world.researchAcc;
 
-  // 1. Potential output per occupation
+  // Farming: clear new plots when there are more farmers than plots; settle who farms which land
+  const isFarmer = (p: Person) => p.occ === OCC.farm && p.health >= 0.2 && workFactor(ageDays(world, p)) > 0;
+  let farmers = 0;
+  let farmHours = 0;
+  for (const p of people) {
+    if (!isFarmer(p)) continue;
+    farmers++;
+    farmHours += p.avgHours;
+  }
+  let plots = totalPlots(world, s);
+  // new land is cleared before existing fields are worked ever harder (extensive before intensive)
+  const want = Math.max(farmers, farmHours / (P.farmLabor * 0.5));
+  if (want > plots && plots < maxPlots(world, s)) {
+    const cleared = clearPlots(world, s, Math.max(0.02, (want - plots) * 0.01));
+    plots += cleared;
+    homestead(world, s, people, cleared);
+  }
+  const farmRights = farmTenure(world, s, people, isFarmer);
+
+  // 1. Everyone chooses today's hours; potential output per occupation (in worker-hours × aptitude).
+  // More hours on the same land bring diminishing returns (intensification).
+  const yields = occYield(world, s);
+  const growing = growingFactor(world, s, world.day);
+  const intensity = plots > 0 ? farmHours / plots : 0;
+  const farmMP = 1 / ((1 + intensity / P.farmLabor) * (1 + intensity / P.farmLabor));
+  decideHours(world, s, people, yields, growing, farmMP, farmRights);
+  // in the off season farmers forage and hunt
+  const offSeason = growing < OFF_SEASON;
+  const wocc = people.map((p) => (p.occ === OCC.farm && offSeason ? OCC.gather : p.occ));
   const potential = new Array<number>(NOCC).fill(0);
   const pot = new Array<number>(people.length).fill(0);
   for (let i = 0; i < people.length; i++) {
     const p = people[i];
-    if (p.occ < 0) continue;
+    p.hoursAcc += p.hours;
+    // leisure: some of it goes into tinkering and curiosity, more so for the mathematically gifted
+    if (ageDays(world, p) >= ADULT_AGE * DAYS_PER_YEAR) {
+      acc[OCC.tinker] += P.leisureResearch * ((P.maxHours - p.hours) / 8) * (p.math / 50) * (p.math / 50);
+    }
+    if (p.occ < 0 || p.hours <= 0) continue;
     const wf = workFactor(ageDays(world, p));
-    if (wf <= 0 || p.health < 0.2) continue;
-    const v = aptitude(world, p, p.occ) * p.effort * wf * (0.5 + 0.5 * p.health) * toolMultiplier(world, p);
+    const h8 = p.hours / 8;
+    const o = wocc[i];
+    const v = aptitude(world, p, o) * p.effort * wf * (0.5 + 0.5 * p.health) * toolMultiplier(world, p) * p.hours;
     pot[i] = v;
-    potential[p.occ] += v;
-    p.skills[p.occ] += P.skillGain * (1 - p.skills[p.occ]);
-    acc[p.occ] += (0.5 + p.skills[p.occ]) * (0.5 + p.math / 100) * p.effort * wf;
-    if (p.occ === OCC.tinker) acc[OCC.tinker] += (p.math / 50) * (p.math / 50) * p.effort;
+    potential[o] += v;
+    p.skills[o] += P.skillGain * h8 * (1 - p.skills[o]);
+    acc[o] += (0.5 + p.skills[o]) * (0.5 + p.math / 100) * p.effort * wf * h8;
+    if (p.occ === OCC.tinker) acc[OCC.tinker] += (p.math / 50) * (p.math / 50) * p.effort * h8;
   }
 
   // 2. Actual output, limited by the environment
   const actual = new Array<number>(NOCC).fill(0);
-  const yields = occYield(world, s);
   const pl = resourceDensity(world, s, 'plants');
   const gm = resourceDensity(world, s, 'game');
   const fs = resourceDensity(world, s, 'fish');
@@ -222,18 +263,9 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   actual[OCC.fish] = Math.min(potential[OCC.fish] * yields[OCC.fish], fs.stock * 0.5);
   harvest(world, s, 'fish', actual[OCC.fish]);
 
-  // Farming: clear new plots when there are more farmers than plots
-  const farmers = people.filter((p, i) => p.occ === OCC.farm && pot[i] > 0).length;
-  let plots = totalPlots(world, s);
-  if (farmers > plots && plots < maxPlots(world, s)) {
-    const cleared = clearPlots(world, s, Math.max(0.02, (farmers - plots) * 0.01));
-    plots += cleared;
-    homestead(world, s, people, cleared);
-  }
   const t0 = world.map.tiles[s.tile];
-  const growing = clamp((tileTempToday(world, t0.temp) - 5) / 15, 0, 1) / 0.55;
-  const plotRatio = farmers > 0 ? Math.min(1, plots / farmers) : 0;
-  actual[OCC.farm] = potential[OCC.farm] * yields[OCC.farm] * growing * plotRatio;
+  const perPlot = plots > 0 ? potential[OCC.farm] / plots : 0;
+  actual[OCC.farm] = yields[OCC.farm] * growing * plots * (perPlot / (1 + perPlot / P.farmLabor));
   actual[OCC.herd] = potential[OCC.herd] * yields[OCC.herd];
 
   s.hides += actual[OCC.hunt] * 0.05 + actual[OCC.herd] * 0.03;
@@ -247,19 +279,19 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   world.monthAcc.foodProduced += actual[OCC.gather] + actual[OCC.hunt] + actual[OCC.fish] + actual[OCC.farm] + actual[OCC.herd];
 
   // 3. Ownership of output
-  const farmRights = farmTenure(world, s, people, pot);
   for (let i = 0; i < people.length; i++) {
     const p = people[i];
-    if (pot[i] <= 0 || potential[p.occ] <= 0) continue;
-    const out = (actual[p.occ] * pot[i]) / potential[p.occ];
+    const o = wocc[i];
+    if (pot[i] <= 0 || potential[o] <= 0) continue;
+    const out = (actual[o] * pot[i]) / potential[o];
     if (out <= 0) continue;
-    const isFood = p.occ !== OCC.tool && p.occ !== OCC.tailor;
-    p.outputAcc += isFood ? out : out * (p.occ === OCC.tool ? s.toolPrice : s.clothesPrice);
+    const isFood = o !== OCC.tool && o !== OCC.tailor;
+    p.outputAcc += isFood ? out : out * (o === OCC.tool ? s.toolPrice : s.clothesPrice);
     // Private farmland overrides pooling: owners keep their harvest
-    const ownFarm = p.occ === OCC.farm && farmRights.get(p.id) === 'own';
+    const ownFarm = o === OCC.farm && farmRights.get(p.id) === 'own';
     let keep = out * (1 - tax);
     const taxed = out * tax;
-    if (p.occ === OCC.farm) {
+    if (o === OCC.farm) {
       const right = farmRights.get(p.id);
       if (right === 'chief') {
         const tribute = keep * 0.3;
@@ -270,15 +302,19 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
       }
     }
     if (isFood) treasury.food += taxed;
-    else if (p.occ === OCC.tool) treasury.tools += taxed;
+    else if (o === OCC.tool) treasury.tools += taxed;
     else treasury.clothes += taxed;
     if (pooled && !ownFarm) {
+      // the hungry eat part of their own catch on the spot
+      const eaten = isFood ? keep * p.hunger : 0;
+      p.food += eaten;
+      keep -= eaten;
       if (isFood) s.food += keep;
-      else if (p.occ === OCC.tool) s.tools += keep;
+      else if (o === OCC.tool) s.tools += keep;
       else s.clothes += keep;
     } else {
       if (isFood) p.food += keep;
-      else if (p.occ === OCC.tool) p.tools += keep;
+      else if (o === OCC.tool) p.tools += keep;
       else p.clothes += keep;
     }
   }
@@ -327,7 +363,7 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   }
 
   // 6. Spoilage
-  const decay = P.foodDecay * (has(world, 'pottery') ? 0.4 : 1);
+  const decay = foodDecayRate(world);
   world.monthAcc.foodDecayed += s.food * decay;
   s.food *= 1 - decay;
   for (const p of people) {
@@ -337,10 +373,10 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   void rng;
 }
 
-type FarmRight = 'own' | 'common' | 'chief' | 'tenant';
+export type FarmRight = 'own' | 'common' | 'chief' | 'tenant';
 
 /** Who farms which kind of land today: owners first, then commons, chief's land, then tenancy. */
-function farmTenure(world: World, s: Settlement, people: Person[], pot: number[]): Map<number, FarmRight> {
+function farmTenure(world: World, s: Settlement, people: Person[], isFarmer: (p: Person) => boolean): Map<number, FarmRight> {
   const rights = new Map<number, FarmRight>();
   const plots = totalPlots(world, s);
   let privateOwned = 0;
@@ -349,9 +385,8 @@ function farmTenure(world: World, s: Settlement, people: Person[], pot: number[]
   let chief = Math.min(s.chiefPlots, plots);
   let rentable = 0;
   for (const p of people) rentable += Math.max(0, p.plots - (p.occ === OCC.farm ? 1 : 0));
-  for (let i = 0; i < people.length; i++) {
-    const p = people[i];
-    if (p.occ !== OCC.farm || pot[i] <= 0) continue;
+  for (const p of people) {
+    if (!isFarmer(p)) continue;
     if (p.plots >= 1) rights.set(p.id, 'own');
     else if (common >= 1) {
       rights.set(p.id, 'common');
@@ -434,13 +469,14 @@ function distributePool(world: World, s: Settlement, people: Person[]): void {
     }
     return;
   }
-  // Rationing by rule
+  // Rationing by rule; in pooled settlements those seen not doing their share get less (conditional reciprocity)
   const w = people.map((p, i) => {
+    const r = pooled ? repShare(world, p) : 1;
     switch (rule) {
-      case DIST.equal: return needs[i] > 0 ? 1 : 0;
-      case DIST.need: return needs[i];
-      case DIST.labor: return needs[i] * 0.4 + p.output * 0.6;
-      default: return needs[i] * rankWeight(p);
+      case DIST.equal: return needs[i] > 0 ? r : 0;
+      case DIST.need: return needs[i] * r;
+      case DIST.labor: return needs[i] * 0.4 * r + p.output * 0.6;
+      default: return needs[i] * rankWeight(p) * r;
     }
   });
   let wsum = 0;
@@ -509,35 +545,6 @@ function eat(world: World, s: Settlement, p: Person, patron: Person | undefined)
 
 // --- monthly -----------------------------------------------------------
 
-/** Effort: how much of a person's marginal output they keep, and how well they are monitored. */
-export function updateEffort(world: World, s: Settlement, people: Person[], admins: number): void {
-  const P = world.params;
-  const alloc = s.practiced[D.allocation];
-  const dist = s.practiced[D.distribution];
-  const size = Math.max(1, people.length);
-  let need = 0;
-  for (const p of people) need += foodNeed(world, p);
-  const poolDays = s.food / Math.max(1, need);
-  for (const p of people) {
-    // Leisure: with plenty of food in store people work less; the ambitious keep going longer
-    const days = poolDays + p.food / Math.max(0.1, foodNeed(world, p));
-    const leisure = clamp(1.4 - days / (250 * (0.5 + p.ambition)), 0.5, 1);
-    let ownShare: number;
-    let monitoring: number;
-    if (alloc === ALLOC.exchange) {
-      ownShare = 1 - taxRate(s);
-      monitoring = 1;
-    } else {
-      ownShare = dist === DIST.labor ? 0.5 : dist === DIST.rank && p.role !== 'none' ? 0.5 : 1 / size;
-      monitoring = alloc === ALLOC.sharing
-        ? clamp(P.dunbar / size, 0, 1)
-        : clamp(((admins * 40) / size) * s.enforcement, 0, 1);
-    }
-    const freeRide = P.freeRide * (1 - ownShare) * (1 - monitoring) * (1 - 0.8 * p.integrity);
-    p.effort = clamp((1 - freeRide) * (1 - 0.2 * p.grievance) * leisure, 0.2, 1);
-  }
-}
-
 /** Monthly market for tools and clothes, priced in food. */
 export function market(world: World, rng: Rng, s: Settlement, people: Person[]): void {
   for (const good of ['tools', 'clothes'] as const) {
@@ -586,12 +593,15 @@ export function targetCounts(world: World, rng: Rng, s: Settlement, people: Pers
   const foodDays = s.food / Math.max(1, need);
   const y = occYield(world, s);
   const dur = toolDurability(world);
-  // tools and clothes in units per day, workers needed at average aptitude
+  // tools and clothes in units per day, workers needed at average aptitude and the usual hours
+  let hrs = 0;
+  for (const p of workers) hrs += p.avgHours;
+  const day = Math.max(1, hrs / n);
   const toolDemand = n / (120 * dur) + Math.max(0, n * 0.3 - s.tools) / 120;
-  t[OCC.tool] = toolDemand / Math.max(0.01, P.toolRate * stoneFactor(world, s));
+  t[OCC.tool] = toolDemand / Math.max(0.001, P.toolRate * stoneFactor(world, s) * day);
   const coldClimate = clamp((12 - world.map.tiles[s.tile].temp) / 15, 0.15, 1);
   const clothesDemand = (people.length / 200) * coldClimate + Math.max(0, people.length * 0.2 - s.clothes) / 200;
-  t[OCC.tailor] = clothesDemand / Math.max(0.01, P.clothesRate * (has(world, 'bone_needle') ? 1.5 : 1));
+  t[OCC.tailor] = clothesDemand / Math.max(0.001, P.clothesRate * (has(world, 'bone_needle') ? 1.5 : 1) * day);
   const surplus = clamp(foodDays / 60 - 0.5, 0, 1);
   t[OCC.tinker] = n * 0.03 * surplus * (0.5 + maxDemand(world));
   // the rest produce food, split across the most productive food occupations
@@ -656,14 +666,17 @@ export function chooseJobs(world: World, rng: Rng, s: Settlement, people: Person
   // Exchange with free choice: each person chases the best expected income. Incomes fall as
   // more people crowd into the same line of work this month (depleting game, flooding the market).
   const values = occYield(world, s);
-  // craft income only counts what actually sold last month
-  values[OCC.tool] = s.toolIncome;
-  values[OCC.tailor] = s.clothesIncome;
+  // craft income only counts what actually sold last month (per day, so per usual working hour)
+  let hrs = 0;
+  for (const p of workers) hrs += p.avgHours;
+  const day = Math.max(1, hrs / Math.max(1, workers.length));
+  values[OCC.tool] = s.toolIncome / day;
+  values[OCC.tailor] = s.clothesIncome / day;
   const base = new Array<number>(NOCC).fill(0);
   for (const p of workers) if (p.occ >= 0) base[p.occ]++;
   const live = [...base];
   const income = (o: number) => {
-    if (o === OCC.tinker) return tinkerFunds / 30 / (live[o] + 1);
+    if (o === OCC.tinker) return tinkerFunds / 30 / day / (live[o] + 1);
     return values[o] / (1 + Math.max(0, live[o] - base[o]) / Math.max(5, base[o]));
   };
   for (const p of workers) {

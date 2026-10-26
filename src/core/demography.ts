@@ -148,15 +148,16 @@ export function marriages(world: World, rng: Rng, people: Person[]): void {
   const singles = people.filter((p) => p.spouseId < 0 && ageYears(world, p) >= ADULT_AGE && ageYears(world, p) < 50);
   const women = rng.shuffle(singles.filter((p) => p.sex === 0));
   const men = rng.shuffle(singles.filter((p) => p.sex === 1));
-  // Assortative by prestige, with randomness
-  const key = (p: Person) => p.prestige + rng.next() * 0.8;
+  // Assortative by prestige and standing as a contributor, with randomness
+  const key = (p: Person) => p.prestige + (p.reputation - 1) * 1.5 + rng.next() * 0.8;
   const wk = women.map((p) => [key(p), p] as const).sort((a, b) => b[0] - a[0] || a[1].id - b[1].id);
   const mk = men.map((p) => [key(p), p] as const).sort((a, b) => b[0] - a[0] || a[1].id - b[1].id);
   const n = Math.min(wk.length, mk.length);
   for (let i = 0; i < n; i++) {
-    if (!rng.chance(0.15)) continue;
     const w = wk[i][1];
     const m = mk[i][1];
+    // nobody wants to marry someone known as a shirker
+    if (!rng.chance(0.15 * clamp(Math.min(w.reputation, m.reputation), 0.2, 1))) continue;
     if (w.fatherId >= 0 && w.fatherId === m.fatherId) continue;
     w.spouseId = m.id;
     m.spouseId = w.id;
@@ -328,6 +329,11 @@ export function migrate(world: World, rng: Rng, s: Settlement, people: Person[],
       seen.add(k.id);
       k.settlement = dest.id;
       k.plots = 0;
+      // newcomers have to earn their standing again
+      k.outsider = true;
+      k.reputation = Math.min(k.reputation, world.params.outsiderRep);
+      k.lowRepMonths = 0;
+      k.prestige *= 0.5;
       moved++;
     }
   }

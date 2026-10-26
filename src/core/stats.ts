@@ -50,6 +50,8 @@ export function updateDemand(world: World, groups: Person[][]): void {
   };
 }
 
+const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
+
 export function gini(values: number[]): number {
   const v = values.filter((x) => x >= 0).sort((a, b) => a - b);
   const n = v.length;
@@ -73,6 +75,7 @@ export function yearStats(world: World): YearStats {
   let griev = 0;
   let effort = 0;
   let workers = 0;
+  let outsiders = 0;
   const wealths: number[] = [];
   for (const p of people) {
     if (p.occ >= 0) {
@@ -80,6 +83,7 @@ export function yearStats(world: World): YearStats {
       effort += p.effort;
       workers++;
     }
+    if (p.outsider) outsiders++;
     health += p.health;
     happy += p.happiness;
     griev += p.grievance;
@@ -109,6 +113,10 @@ export function yearStats(world: World): YearStats {
     occ,
     support: DIMS.map((_, d) => sup[d][world.polity.institutions[d]]),
     effort: workers ? effort / workers : 1,
+    hours: sum(world.yearAcc.hours) / Math.max(1, sum(world.yearAcc.workDays)),
+    occHours: world.yearAcc.hours.map((h, o) => h / Math.max(1, world.yearAcc.workDays[o])),
+    exiled: world.yearAcc.exiled,
+    outsiders,
   };
 }
 
@@ -124,12 +132,17 @@ export function diagnose(world: World): Diagnosis[] {
   const perCap = lm.personDays ? lm.foodProduced / lm.personDays : 0;
   const pop = world.people.length;
   const tinkers = world.people.filter((p) => p.occ === OCC.tinker).length;
-  if (perCap < world.params.foodNeedAdult * 1.05) {
+  const workers = world.people.filter((p) => p.occ >= 0);
+  const avgHours = workers.reduce((a, p) => a + p.avgHours, 0) / Math.max(1, workers.length);
+  const hungerRate = lm.personDays ? lm.hungerDays / lm.personDays : 0;
+  if (perCap < world.params.foodNeedAdult * 1.3 && avgHours < world.params.maxHours * 0.5 && hungerRate < 0.02) {
+    out.push({ level: 'info', text: `粮食产出只比需要略多（人均每日 ${perCap.toFixed(2)}），但这是人们的选择：平均每天只干 ${avgHours.toFixed(1)} 小时就收工。多产的粮食放不住、也不全归自己，多干不划算。储存技术、私有产权、更多的需求（工具、衣物、资助研究）会让人多干。` });
+  } else if (perCap < world.params.foodNeedAdult * 1.05) {
     out.push({ level: 'bad', text: `粮食产出仅够糊口（人均每日 ${perCap.toFixed(2)}），几乎没有剩余养活专职研究者和官吏。` });
   } else if (perCap < world.params.foodNeedAdult * 1.3) {
     out.push({ level: 'warn', text: `粮食剩余很少（人均每日 ${perCap.toFixed(2)}），社会分工难以扩大。` });
   }
-  if (tinkers === 0) out.push({ level: 'warn', text: '没有人从事专职研究，科技只能靠从业者干中学缓慢积累。' });
+  if (tinkers === 0) out.push({ level: 'warn', text: '没有人从事专职研究，科技只能靠从业者干中学和闲暇捣鼓缓慢积累。' });
   else out.push({ level: 'info', text: `${tinkers} 人从事专职研究（占 ${((tinkers / Math.max(1, pop)) * 100).toFixed(1)}%）。` });
 
   const env = envFlags(world);
@@ -143,14 +156,28 @@ export function diagnose(world: World): Diagnosis[] {
   if (!availableTechs(world, env).length && world.tech.known.some((k) => !k)) {
     out.push({ level: 'bad', text: '当前没有任何可研究的科技：要么缺少前置科技，要么环境中缺少关键资源。' });
   }
-  const effort = world.people.filter((p) => p.occ >= 0);
-  const avgEffort = effort.reduce((s, p) => s + p.effort, 0) / Math.max(1, effort.length);
-  if (avgEffort < 0.8) {
-    const bigShare = world.settlements.some((s) => s.alive && s.practiced[D.allocation] === ALLOC.sharing && s.pop > world.params.dunbar);
-    const reasons = ['存粮充足时人们会少干活'];
-    if (bigShare) reasons.push('部分共享群体超过邓巴数，出现搭便车');
-    if (world.settlements.some((s) => s.alive && s.practiced[D.allocation] === ALLOC.command)) reasons.push('统筹体制下产出不归自己，监督不足时会偷懒');
-    out.push({ level: 'info', text: `平均努力程度 ${(avgEffort * 100).toFixed(0)}%：${reasons.join('；')}。` });
+  if (workers.length) {
+    const P = world.params;
+    const hours = avgHours;
+    const byAlloc = [ALLOC.sharing, ALLOC.exchange, ALLOC.command].map((a) => {
+      const ws = workers.filter((p) => world.settlements[p.settlement].practiced[D.allocation] === a);
+      return ws.length ? ws.reduce((x, p) => x + p.avgHours, 0) / ws.length : -1;
+    });
+    const parts = ['共享', '交换', '统筹'].map((n, k) => (byAlloc[k] >= 0 ? `${n} ${byAlloc[k].toFixed(1)}` : '')).filter(Boolean);
+    out.push({ level: 'info', text: `平均每天劳动 ${hours.toFixed(1)} 小时，闲暇 ${(P.maxHours - hours).toFixed(1)} 小时（${parts.join('、')}）。人们吃饱、存粮又放不久时就少干活；闲暇的一部分用来捣鼓，也会推动科技。` });
+    const bigShare = world.settlements.filter((s) => s.alive && s.practiced[D.allocation] !== ALLOC.exchange && s.pop > P.dunbar);
+    if (bigShare.length) {
+      out.push({ level: 'warn', text: `${bigShare.length} 个公有聚落超过邓巴数（${P.dunbar} 人），谁出力谁偷懒看不清，干多干少分得差不多，搭便车增多。` });
+    }
+    if (world.settlements.some((s) => s.alive && s.practiced[D.allocation] === ALLOC.command) && !world.people.some((p) => p.occ === OCC.admin)) {
+      out.push({ level: 'warn', text: '统筹体制下没有官吏监督，产出不归自己，人们只靠熟人之间的声誉约束。' });
+    }
+    const low = workers.filter((p) => p.reputation < P.exileRep).length;
+    const outsiders = world.people.filter((p) => p.outsider).length;
+    const last = world.stats[world.stats.length - 1];
+    if (low || outsiders || last?.exiled) {
+      out.push({ level: 'info', text: `${low} 人被看作不出力（声誉低于 ${P.exileRep}），${outsiders} 名外来者还在重新挣得认可${last?.exiled ? `；去年有 ${last.exiled} 人被排挤出聚落` : ''}。` });
+    }
   }
   if (world.polity.legitimacy < 0.35) out.push({ level: 'bad', text: `政权合法性很低（${(world.polity.legitimacy * 100).toFixed(0)}%），可能发生政变或革命。` });
   const weak = world.settlements.filter((s) => s.alive && s.enforcement < world.params.enforceThreshold);

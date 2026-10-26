@@ -95,11 +95,25 @@ export interface Person {
   integrity: number;
   risk: number;
   conformity: number;
+  /** Diligence 0..1: how little an hour of work tires this person (heritable). */
+  diligence: number;
   skills: number[];
   occ: number;
   /** Occupation in childhood household, used by hereditary occupation. */
   parentOcc: number;
+  /** Work intensity while working (sloppiness from grievance), 0..1. */
   effort: number;
+  /** Hours worked today (chosen daily, DESIGN.md §4.1). */
+  hours: number;
+  /** Sum of hours worked this month, and last month's daily average. */
+  hoursAcc: number;
+  avgHours: number;
+  /** Contribution reputation in the home settlement; 1 = does one's share. */
+  reputation: number;
+  /** Consecutive months with reputation below the exclusion threshold. */
+  lowRepMonths: number;
+  /** Newcomer who has not yet earned a standing in this settlement. */
+  outsider: boolean;
   // Inventory
   food: number;
   tools: number;
@@ -217,6 +231,12 @@ export interface YearStats {
   /** Power-weighted support for the current institution per dimension. */
   support: number[];
   effort: number;
+  /** Average daily work hours over the year of working-age people with an occupation, overall and per occupation. */
+  hours: number;
+  occHours: number[];
+  /** People driven out of their settlement for shirking this year. */
+  exiled: number;
+  outsiders: number;
 }
 
 export type Command =
@@ -254,7 +274,7 @@ export interface World {
   lastMonth: { foodProduced: number; foodDecayed: number; coldSum: number; hungerDays: number; personDays: number };
   era: number;
   stats: YearStats[];
-  yearAcc: { births: number; deaths: number; starved: number };
+  yearAcc: { births: number; deaths: number; starved: number; exiled: number; hours: number[]; workDays: number[] };
   events: GameEvent[];
   eventSeq: number;
   pending: Command[];

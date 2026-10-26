@@ -40,6 +40,7 @@ export function updatePrestige(world: World, groups: Person[][]): void {
         clamp(p.output / avgOut, 0, 3) * 0.3 +
         clamp(wealth(p, s) / avgW, 0, 3) * 0.25 +
         (Math.min(age, 50) / 50) * 0.4 +
+        (p.reputation - 1) * 0.5 +
         role +
         (p.notable ? 0.3 : 0);
       p.prestige = p.prestige * 0.9 + target * 0.1;
@@ -47,7 +48,7 @@ export function updatePrestige(world: World, groups: Person[][]): void {
   }
 }
 
-/** Grievance and happiness: hunger, cold, envy, and living under institutions one dislikes. */
+/** Grievance and happiness: hunger, cold, envy, overwork, leisure, and living under institutions one dislikes. */
 export function updateMood(world: World, groups: Person[][]): void {
   const pol = world.polity;
   for (const s of world.settlements) {
@@ -68,9 +69,11 @@ export function updateMood(world: World, groups: Person[][]): void {
       }
       mismatch = n ? mismatch / n : 0;
       const envy = exchange && wealth(p, s) < avgW * 0.3 ? 0.3 : 0;
-      const target = clamp(p.hunger * 1.5 + p.cold + envy + mismatch * 0.7, 0, 1);
+      const overwork = clamp((p.avgHours - 9) / 3, 0, 1) * 0.3;
+      const target = clamp(p.hunger * 1.5 + p.cold + envy + overwork + mismatch * 0.7, 0, 1);
       p.grievance = p.grievance * 0.85 + target * 0.15;
-      p.happiness = clamp(1 - p.grievance * 0.6 - p.hunger * 0.5 - p.cold * 0.3 + clamp(p.prestige, 0, 2) * 0.05, 0, 1);
+      const leisure = p.occ >= 0 ? world.params.leisureJoy * (1 - p.avgHours / world.params.maxHours - 0.5) : 0;
+      p.happiness = clamp(1 - p.grievance * 0.6 - p.hunger * 0.5 - p.cold * 0.3 + clamp(p.prestige, 0, 2) * 0.05 + leisure, 0, 1);
     }
   }
 }
