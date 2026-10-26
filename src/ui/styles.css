@@ -164,3 +164,4 @@ table.list tr.click:hover { background: var(--panel-2); cursor: pointer; }
 .mini { display: grid; grid-template-columns: 1fr 40px; gap: 4px; align-items: center; font-size: 11px; }
 .mini .bar-val { text-align: right; color: var(--muted); }
 #tab-body { overflow-x: hidden; }
+#focus-banner { padding: 6px 10px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 12px; }

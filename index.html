@@ -32,6 +32,11 @@
           </div>
           <p class="muted small" id="band-hint"></p>
           <div class="field-row">
+            <label>NPC 部落数 <input id="npc-count" type="number" min="0" max="8" step="1" value="3" /></label>
+            <label>每个 NPC 人口 <input id="npc-pop" type="number" min="50" max="1500" step="50" value="300" /></label>
+          </div>
+          <p class="muted small">地图其他地方还生活着别的部落，按同一套规则完整模拟。数量越多越慢。</p>
+          <div class="field-row">
             <label>模板 <select id="preset"></select></label>
           </div>
           <p class="muted small" id="preset-desc"></p>
@@ -72,11 +77,13 @@
             <button data-overlay="terrain" class="on">地形</button>
             <button data-overlay="resources">资源</button>
             <button data-overlay="institutions">执行力</button>
+            <button data-overlay="polities">政体</button>
           </div>
           <div id="map-hint" class="muted small">点击聚落查看居民；红色虚线圈 = 制度执行不到的聚落</div>
         </div>
         <aside id="panel">
           <nav id="tabs"></nav>
+          <div id="focus-banner" class="hidden"></div>
           <div id="tab-body"></div>
         </aside>
       </div>

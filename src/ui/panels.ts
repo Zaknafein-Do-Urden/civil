@@ -17,6 +17,8 @@ import type { Person, World } from '../core/types';
 import { bar, esc, mini, pct } from './dom';
 import { drawChart } from './chart';
 import { settlementColor } from './mapView';
+import { PLAYER, polityView } from '../core/nations';
+import { diplomacy } from './diplomacy';
 
 export interface Ui {
   world: World;
@@ -24,16 +26,21 @@ export interface Ui {
   personId: number;
   settlementId: number;
   majorOnly: boolean;
+  /** Polity whose overview, institutions, elite and tech the tabs show (0 = the player's). */
+  focus: number;
   select(kind: 'person' | 'settlement', id: number): void;
   toast(msg: string): void;
 }
 
-interface Tab {
+export interface Tab {
   id: string;
   name: string;
   mount(el: HTMLElement, ui: Ui): void;
   update(el: HTMLElement, ui: Ui): void;
 }
+
+/** The focused polity as if it were the only one. */
+const view = (ui: Ui): World => polityView(ui.world, ui.focus);
 
 const personLink = (w: World, id: number): string => {
   const p = personById(w, id);
@@ -68,7 +75,7 @@ const overview: Tab = {
       <h4>职业结构</h4><canvas class="chart" id="ch-occ"></canvas>`;
   },
   update(el, ui) {
-    const w = ui.world;
+    const w = view(ui);
     const st = w.stats;
     const last = st[st.length - 1];
     const l = personById(w, w.polity.leaderId);
@@ -133,12 +140,12 @@ const institutions: Tab = {
     el.innerHTML = `<p class="muted small">黄色为现行制度。每个选项两条支持度：<b>上</b>＝按权力加权（决定改革），<b>下</b>＝全体成年人（决定民心与革命）。</p>
       <div id="inst-list"></div>
       <h3>各聚落执行情况</h3><div id="inst-settlements"></div>
-      <h3>推动思潮</h3>
+      <div id="mv-box"><h3>推动思潮</h3>
       <p class="muted small">让一部分理想主义者开始鼓吹某个选项。其他人会按各自利益决定支持还是反对，结果可能是改革、被否决或引发革命。</p>
       <div class="field-row"><label>维度 <select id="mv-dim">${DIMS.map((d, i) => `<option value="${i}">${d.name}</option>`).join('')}</select></label></div>
       <div class="field-row"><label>主张 <select id="mv-opt"></select></label></div>
       <div class="field-row"><label>理想主义者比例 <input id="mv-str" type="range" min="5" max="50" value="20" /> <span id="mv-str-v">20%</span></label></div>
-      <button id="mv-go" class="primary">发起思潮</button>`;
+      <button id="mv-go" class="primary">发起思潮</button></div>`;
     const dimSel = el.querySelector('#mv-dim') as HTMLSelectElement;
     const optSel = el.querySelector('#mv-opt') as HTMLSelectElement;
     const str = el.querySelector('#mv-str') as HTMLInputElement;
@@ -154,7 +161,8 @@ const institutions: Tab = {
     };
   },
   update(el, ui) {
-    const w = ui.world;
+    const w = view(ui);
+    (el.querySelector('#mv-box') as HTMLElement).style.display = ui.focus === PLAYER ? '' : 'none';
     const ws = weightedSupport(w);
     const ps = popularSupport(w);
     el.querySelector('#inst-list')!.innerHTML = DIMS.map((d, di) => {
@@ -183,7 +191,8 @@ const settlement: Tab = {
   name: '聚落',
   mount() {},
   update(el, ui) {
-    const w = ui.world;
+    const target = ui.world.settlements[ui.settlementId];
+    const w = target?.alive ? polityView(ui.world, target.polity) : view(ui);
     const s = w.settlements[ui.settlementId];
     if (!s || !s.alive) {
       const rows = w.settlements.filter((x) => x.alive).sort((a, b) => b.pop - a.pop)
@@ -216,7 +225,7 @@ const settlement: Tab = {
       return `<span class="dot ${child ? 'child' : ''} ${elite}" style="background:${color}" data-person="${p.id}" title="${esc(p.name)} ${Math.floor(ageYears(w, p))}岁 ${p.occ >= 0 ? OCC_NAMES[p.occ] : child ? '儿童' : '老人'}"></span>`;
     }).join('');
     const diff = DIMS.map((d, di) => `<div class="small">${d.name}：<b>${esc(optName(d.id, s.practiced[di]))}</b>${s.practiced[di] !== w.polity.institutions[di] ? ' <span style="color:var(--warn)">（与国家不同）</span>' : ''}</div>`).join('');
-    el.innerHTML = `<div class="person-head"><h3><span style="color:${settlementColor(s.id)}">●</span> ${esc(s.name)}${s.id === w.polity.capital ? ' ★首都' : ''}</h3><a class="link" data-settlement="-1">全部聚落</a></div>
+    el.innerHTML = `<div class="person-head"><h3><span style="color:${settlementColor(s.id)}">●</span> ${esc(s.name)}${s.id === w.polity.capital ? ' ★首都' : ''} <span class="small muted">${esc(w.polity.name)}${s.origin !== s.polity ? ' · 被征服' : ''}</span></h3><a class="link" data-settlement="-1">全部聚落</a></div>
       <div class="muted small">建于${formatDate(s.founded)} · ${TERRAIN_NAMES[tile.terrain]} · 年均 ${tile.temp.toFixed(0)}°C · ${tile.river ? '河畔' : ''}${tile.coast ? '海滨' : ''}</div>
       <div class="kpis" style="margin-top:6px">
         <div class="kpi"><div class="k">人口</div><div class="v">${people.length}</div></div>
@@ -243,10 +252,10 @@ const people: Tab = {
   name: '人物',
   mount() {},
   update(el, ui) {
-    const w = ui.world;
+    let w = ui.world;
     const p = personById(w, ui.personId);
     if (p) {
-      el.innerHTML = personDetail(w, p);
+      el.innerHTML = personDetail(polityView(w, w.settlements[p.settlement].polity), p);
       return;
     }
     const dead = w.notables.find((x) => x.id === ui.personId);
@@ -256,6 +265,8 @@ const people: Tab = {
         <div class="bio">${dead.bio.map((b) => `<div><span class="muted">${formatDate(b.day)}</span> ${esc(b.text)}</div>`).join('')}</div>`;
       return;
     }
+    // the lists show the focused polity
+    w = view(ui);
     const l = personById(w, w.polity.leaderId);
     const council = w.polity.councilIds.map((id) => personById(w, id)).filter((x): x is Person => !!x);
     const row = (x: Person, extra: string) => `<tr class="click" data-person="${x.id}"><td>${esc(x.name)}</td><td>${Math.floor(ageYears(w, x))}</td><td>${x.occ >= 0 ? OCC_NAMES[x.occ] : '—'}</td><td>${esc(extra)}</td></tr>`;
@@ -307,7 +318,7 @@ const tech: Tab = {
   name: '科技',
   mount() {},
   update(el, ui) {
-    const w = ui.world;
+    const w = view(ui);
     const env = envFlags(w);
     const demand = (Object.keys(DOMAIN_NAMES) as Domain[]).map((d) => bar(DOMAIN_NAMES[d], w.demand[d] ?? 0, '#ffb74d')).join('');
     const rows = TECHS.map((t, i) => {
@@ -359,7 +370,7 @@ const diagnosis: Tab = {
   name: '诊断',
   mount() {},
   update(el, ui) {
-    const d = diagnose(ui.world);
+    const d = diagnose(view(ui));
     el.innerHTML = `<p class="muted small">这个社会为什么发展或停滞：根据当前状态自动给出的解释。</p>` +
       d.map((x) => `<div class="diag ${x.level}">${esc(x.text)}</div>`).join('');
   },
@@ -403,4 +414,4 @@ function fmt(v: number): string {
   return Math.abs(v) < 0.01 && v !== 0 ? v.toExponential(1) : String(+v.toFixed(4));
 }
 
-export const TABS: Tab[] = [overview, institutions, settlement, people, tech, events, diagnosis, params];
+export const TABS: Tab[] = [overview, institutions, settlement, people, tech, diplomacy, events, diagnosis, params];

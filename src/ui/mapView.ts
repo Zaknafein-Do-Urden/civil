@@ -2,6 +2,7 @@
 
 import { isLand, neighbors } from '../core/map';
 import type { Terrain, Tile, World, WorldMap } from '../core/types';
+import { allPolities, polityColor } from '../core/nations';
 
 const TERRAIN_COLOR: Record<Terrain, string> = {
   ocean: '#1d3b5c',
@@ -21,7 +22,7 @@ export function settlementColor(id: number): string {
   return `hsl(${hue.toFixed(0)} 70% 55%)`;
 }
 
-export type Overlay = 'terrain' | 'resources' | 'institutions';
+export type Overlay = 'terrain' | 'resources' | 'institutions' | 'polities';
 
 export class MapView {
   size = 10;
@@ -121,18 +122,47 @@ export class MapView {
       }
     }
 
-    // territory tint
+    // territory tint: by settlement, or by polity on the polity layer
+    const pols = world ? allPolities(world) : [];
+    const byPolity = this.overlay === 'polities';
     if (world) {
       for (const st of world.settlements) {
         if (!st.alive) continue;
-        ctx.fillStyle = settlementColor(st.id);
-        ctx.globalAlpha = this.selectedSettlement === st.id ? 0.35 : 0.18;
+        ctx.fillStyle = byPolity ? polityColor(pols[st.polity]) : settlementColor(st.id);
+        ctx.globalAlpha = byPolity ? (this.selectedSettlement === st.id ? 0.6 : 0.42) : this.selectedSettlement === st.id ? 0.35 : 0.18;
         for (const id of st.territory) {
           const [cx, cy] = this.center(map.tiles[id]);
           this.hex(ctx, cx, cy, s);
           ctx.fill();
         }
         ctx.globalAlpha = 1;
+      }
+    }
+
+    // polity borders: each polity's territory outlined in its colour
+    if (world) {
+      const owner = map.tiles.map((t) => (t.owner >= 0 && world.settlements[t.owner]?.alive ? world.settlements[t.owner].polity : -1));
+      ctx.lineWidth = Math.max(1.5, s * 0.25);
+      ctx.lineCap = 'round';
+      for (const t of map.tiles) {
+        const a = owner[t.id];
+        if (a < 0) continue;
+        const [x1, y1] = this.center(t);
+        ctx.strokeStyle = polityColor(pols[a], 62);
+        ctx.beginPath();
+        for (const n of neighbors(map, t)) {
+          if (owner[n.id] === a) continue;
+          const [x2, y2] = this.center(n);
+          // the shared hex edge: perpendicular to the centre line, a bit inside this tile
+          const mx = x1 + (x2 - x1) * 0.47;
+          const my = y1 + (y2 - y1) * 0.47;
+          const len = Math.hypot(x2 - x1, y2 - y1) || 1;
+          const px = (-(y2 - y1) / len) * s * 0.5;
+          const py = ((x2 - x1) / len) * s * 0.5;
+          ctx.moveTo(mx - px, my - py);
+          ctx.lineTo(mx + px, my + py);
+        }
+        ctx.stroke();
       }
     }
 
@@ -172,17 +202,18 @@ export class MapView {
     }
 
     if (world) {
-      const cap = world.polity.capital;
+      const capitals = new Set(pols.filter((p) => p.alive).map((p) => p.capital));
       for (const st of world.settlements) {
         if (!st.alive) continue;
         const [cx, cy] = this.center(map.tiles[st.tile]);
         const r = Math.max(3, Math.min(s * 1.6, 2 + Math.sqrt(st.pop) * 0.45));
+        const cap = capitals.has(st.id);
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = settlementColor(st.id);
+        ctx.fillStyle = byPolity ? polityColor(pols[st.polity]) : settlementColor(st.id);
         ctx.fill();
-        ctx.lineWidth = st.id === cap ? 2.5 : 1;
-        ctx.strokeStyle = st.id === cap ? '#ffd54a' : 'rgba(0,0,0,0.7)';
+        ctx.lineWidth = cap ? 2.5 : 1;
+        ctx.strokeStyle = cap ? '#ffd54a' : 'rgba(0,0,0,0.7)';
         ctx.stroke();
         if (this.overlay === 'institutions' && st.enforcement < world.params.enforceThreshold) {
           ctx.strokeStyle = '#ff5252';

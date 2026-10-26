@@ -78,6 +78,14 @@ export function dailyDemography(world: World, rng: Rng, groups: Person[][]): Dea
   return dead;
 }
 
+/** Deaths outside the daily pass (battle): bury, settle inheritance, and remove from the world. */
+export function killPeople(world: World, victims: Person[], cause: string): void {
+  if (!victims.length) return;
+  const ids = new Set(victims.map((p) => p.id));
+  for (const p of victims) handleDeath(world, p, cause);
+  world.people = world.people.filter((p) => !ids.has(p.id));
+}
+
 function handleDeath(world: World, p: Person, cause: string): void {
   const spouse = personById(world, p.spouseId);
   if (spouse) spouse.spouseId = -1;
@@ -198,6 +206,9 @@ export function newSettlement(world: World, rng: Rng, tile: number): Settlement 
     practiced: [...world.polity.institutions],
     pop: 0,
     stressMonths: 0,
+    polity: world.polity.id,
+    origin: world.polity.id,
+    conquered: -1,
   };
   world.settlements.push(s);
   claimTerritory(world, s);
