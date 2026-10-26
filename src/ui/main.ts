@@ -1,7 +1,7 @@
 import { DIMS, PRESETS, UNSPECIFIED } from '../core/rules';
 import type { CultureSetting, DimId } from '../core/rules';
 import { TERRAIN_NAMES, generateMap, isLand, siteScore, tilesWithin } from '../core/map';
-import { createWorld, deserialize, serialize, step } from '../core/sim';
+import { DEFAULT_BAND_SIZE, createWorld, deserialize, serialize, step } from '../core/sim';
 import { ERAS } from '../core/tech';
 import { formatDate } from '../core/events';
 import { personById } from '../core/person';
@@ -94,7 +94,26 @@ function readCulture(): CultureSetting {
   return c;
 }
 
+function readPopulation(): number {
+  return Math.max(200, Math.min(3000, +($('#population') as HTMLInputElement).value || 1000));
+}
+
+function readBandSize(): number {
+  return Math.max(20, Math.min(500, +($('#band-size') as HTMLInputElement).value || DEFAULT_BAND_SIZE));
+}
+
+/** Tell the player up front that the tribe starts as several camps, not one village. */
+function updateBandHint(): void {
+  const pop = readPopulation();
+  const n = Math.max(1, Math.round(pop / readBandSize()));
+  $('#band-hint').textContent = n === 1
+    ? `${pop} 人全部住在同一个营地。`
+    : `石器时代的人靠采集狩猎为生，一块地养不活太多人，所以 ${pop} 人不会住在同一个村落，而是分成约 ${n} 个群落（每个约 ${Math.round(pop / n)} 人），散布在出生地附近，共同组成一个部落。附近地形太差时群落会少一些、每个人多一些。群落之后会自行壮大、分裂、迁徙；真实的狩猎采集营地通常 25–50 人。`;
+}
+
 ($('#seed') as HTMLInputElement).value = randomSeed();
+($('#population') as HTMLInputElement).oninput = updateBandHint;
+($('#band-size') as HTMLInputElement).oninput = updateBandHint;
 ($('#seed') as HTMLInputElement).onchange = regenerate;
 $('#reroll').onclick = () => {
   ($('#seed') as HTMLInputElement).value = randomSeed();
@@ -103,8 +122,7 @@ $('#reroll').onclick = () => {
 $('#best-site').onclick = pickBestSite;
 $('#start').onclick = () => {
   const seed = ($('#seed') as HTMLInputElement).value.trim() || randomSeed();
-  const population = Math.max(200, Math.min(3000, +($('#population') as HTMLInputElement).value || 1000));
-  startGame(createWorld({ seed, culture: readCulture(), startTile, population }));
+  startGame(createWorld({ seed, culture: readCulture(), startTile, population: readPopulation(), bandSize: readBandSize() }));
 };
 $('#load-local').onclick = () => {
   try {
@@ -125,6 +143,7 @@ $('#load-local').onclick = () => {
   }
 };
 buildDims();
+updateBandHint();
 regenerate();
 window.addEventListener('resize', () => {
   setupView.draw();

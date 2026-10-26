@@ -15,7 +15,7 @@
       <div class="setup-body">
         <div class="setup-map">
           <canvas id="setup-map"></canvas>
-          <div class="map-legend">点击地图选择部落的出生地。白圈是初始活动范围。</div>
+          <div class="map-legend">点击地图选择部落的出生地。每格约 6 公里宽（约 35 平方公里）；白圈是一个群落的日常活动范围（半径 2 格，约 12 公里，一天能走个来回）。</div>
           <div id="tile-info" class="tile-info"></div>
         </div>
         <div class="setup-side">
@@ -27,6 +27,10 @@
             <label>初始人口 <input id="population" type="number" min="200" max="3000" step="100" value="1000" /></label>
             <button id="best-site" class="ghost">推荐出生地</button>
           </div>
+          <div class="field-row">
+            <label>每个群落人数 <input id="band-size" type="number" min="20" max="500" step="10" value="50" /></label>
+          </div>
+          <p class="muted small" id="band-hint"></p>
           <div class="field-row">
             <label>模板 <select id="preset"></select></label>
           </div>

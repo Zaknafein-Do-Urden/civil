@@ -21,11 +21,16 @@ import { updateDemand, yearStats } from './stats';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, NOCC, OCC } from './types';
 import type { Command, Person, World } from './types';
 
+/** Typical forager camp size; real local bands are 25–50 people (DESIGN.md §7). */
+export const DEFAULT_BAND_SIZE = 50;
+
 export interface WorldConfig {
   seed: string;
   culture?: CultureSetting;
   startTile?: number;
   population?: number;
+  /** People per starting band (camp); the tribe starts as several nearby bands. */
+  bandSize?: number;
   params?: Partial<Params>;
 }
 
@@ -96,7 +101,7 @@ export function createWorld(cfg: WorldConfig): World {
   // Bands of a tribe settle around the start tile
   const pop = cfg.population ?? 1000;
   const start = cfg.startTile !== undefined && isLand(map.tiles[cfg.startTile]) ? cfg.startTile : bestStartTile(world);
-  const nBands = Math.max(1, Math.round(pop / 70));
+  const nBands = Math.max(1, Math.round(pop / (cfg.bandSize ?? DEFAULT_BAND_SIZE)));
   const first = newSettlement(world, rng, start);
   for (let i = 1; i < nBands; i++) {
     let site = -1;
