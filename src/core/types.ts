@@ -307,6 +307,8 @@ export interface War {
   conquests: [number, number];
   /** Monthly actions so far. */
   actions: number;
+  /** Day of the last conquest in this war. */
+  lastConquest: number;
   /** Day the war ended, or -1 while ongoing. */
   end: number;
   outcome: string;

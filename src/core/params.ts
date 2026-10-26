@@ -138,7 +138,7 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'researchRate', name: '研究产出', desc: '专职研究者每天的研究量', min: 0, max: 0.2, step: 0.005 },
   { key: 'patronShare', name: '资助意愿', desc: '富人每月拿出多余财富资助研究的比例', min: 0, max: 0.3, step: 0.01 },
   { key: 'contactRange', name: '接触距离', desc: '两国聚落相距多少格以内即算接触', min: 2, max: 30, step: 1 },
-  { key: 'warPropensity', name: '战争倾向', desc: '主战度的整体倍数；0 表示永不开战', min: 0, max: 3, step: 0.1 },
+  { key: 'warPropensity', name: '战争倾向', desc: '每个人主战意愿（几率比）的倍数；0 表示永不开战', min: 0, max: 3, step: 0.1 },
   { key: 'campaignRange', name: '出征半径', desc: '离目标多少格以内的聚落能出兵', min: 3, max: 30, step: 1 },
   { key: 'casualtyRate', name: '伤亡率', desc: '一次势均力敌的战役中参战者的阵亡比例', min: 0, max: 0.5, step: 0.01 },
   { key: 'raidLoot', name: '劫掠比例', desc: '劫掠完全得手时抢走目标聚落存粮的比例', min: 0, max: 1, step: 0.05 },

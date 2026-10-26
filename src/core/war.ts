@@ -263,10 +263,12 @@ function personalHawk(world: World, p: Person): number {
     (p.ambition - 0.5) * (p.role === 'leader' ? 2 : 0.6) - (ageYears(world, p) > 50 ? 0.2 : 0);
 }
 
-const WAR_BASE = -1.3;
+const WAR_BASE = -1.5;
 
 function warSupport(world: World, x: Realm, m: Motives): number {
-  return decide(world, x, (p) => sigmoid(WAR_BASE + m.total + personalHawk(world, p)));
+  // warPropensity multiplies everyone's odds of favouring war
+  const base = WAR_BASE + ln(Math.max(0.01, world.params.warPropensity));
+  return decide(world, x, (p) => sigmoid(base + m.total + personalHawk(world, p)));
 }
 
 // --- yearly diplomacy ----------------------------------------------------
@@ -345,7 +347,7 @@ export function diplomacyYearly(world: World, rng: Rng): void {
       if (declared.has(X.id) || dist > reach(X.id)) continue;
       const m = motives(world, X, rel, strengths[X.id], strengths[Y.id]);
       const sup = warSupport(world, X, m);
-      if (sup > 0.5 && rng.chance(clamp(P.warPropensity * 0.5, 0, 1))) {
+      if (sup > 0.5 && rng.chance(0.3)) {
         declared.add(X.id);
         declareWar(world, X, Y, rel, m, sup, R);
         break;
@@ -483,7 +485,7 @@ function startWar(world: World, attacker: number, defender: number, goal: War['g
   rel.since = world.day;
   const war: War = {
     id: world.warSeq++, attacker, defender, start: world.day, goal,
-    deaths: [0, 0], loot: [0, 0], conquests: [0, 0], actions: 0, end: -1, outcome: '',
+    deaths: [0, 0], loot: [0, 0], conquests: [0, 0], actions: 0, lastConquest: -DAYS_PER_YEAR, end: -1, outcome: '',
   };
   world.wars.push(war);
   return war;
@@ -527,7 +529,7 @@ export function warMonthly(world: World, rng: Rng): void {
       const me = R[side === 0 ? war.attacker : war.defender];
       const them = R[side === 0 ? war.defender : war.attacker];
       if (!me || !them || war.end >= 0) break;
-      if (!rng.chance(side === 0 ? 0.2 : 0.1)) continue;
+      if (!rng.chance(side === 0 ? 0.12 : 0.06)) continue;
       campaign(world, rng, war, side, me, them, R);
     }
   }
@@ -593,8 +595,10 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
     addEvent(world, 'war', false, `劫掠：${me.pol.name} → ${target.name}`, `${me.pol.name}劫掠${them.pol.name}的${target.name}，抢走食物 ${loot.toFixed(0)}，运回${base.name}。${tally}。`, [], target.id);
     return;
   }
-  if (win && A > Dv * 1.5) {
-    addEvent(world, 'war', who, `战役：${me.pol.name}攻克${target.name}`, `${me.pol.name}大举进攻${them.pol.name}的${target.name}并取胜。${tally}。`, [], target.id);
+  // a war takes at most one settlement a year: holding new ground takes time
+  if (win && A > Dv * 1.5 && world.day - war.lastConquest >= DAYS_PER_YEAR) {
+    war.lastConquest = world.day;
+    addEvent(world, 'war', false, `战役：${me.pol.name}攻克${target.name}`, `${me.pol.name}大举进攻${them.pol.name}的${target.name}并取胜。${tally}。`, [], target.id);
     conquer(world, rng, target, me, them, R);
     war.conquests[side]++;
     me.pol.warMood = clamp(me.pol.warMood + 0.05, -1, 1);

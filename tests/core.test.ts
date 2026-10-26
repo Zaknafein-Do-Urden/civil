@@ -106,12 +106,12 @@ describe('multiple polities', () => {
       return w;
     };
     const a = make();
-    runDays(a, 6 * DAYS_PER_YEAR);
+    runDays(a, 10 * DAYS_PER_YEAR);
     expect(a.warSeq).toBeGreaterThan(0);
     expect(a.commandLog.length).toBe(1);
     const b = deserialize(serialize(a));
     const c = make();
-    runDays(c, 6 * DAYS_PER_YEAR);
+    runDays(c, 10 * DAYS_PER_YEAR);
     expect(stateHash(c)).toBe(stateHash(a));
     runDays(a, 2 * DAYS_PER_YEAR);
     runDays(b, 2 * DAYS_PER_YEAR);
