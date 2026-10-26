@@ -7,7 +7,7 @@ import type { CultureSetting } from './rules';
 import { Rng, seedRng } from './rng';
 import { generateMap, isLand, siteScore } from './map';
 import { ERAS, TECHS, availableTechs, computeEra, initTech, monthlyResearch } from './tech';
-import { addBio, ageYears, createFounder, personById } from './person';
+import { addBio, ageYears, createFounder, personById, surnameOf } from './person';
 import { addEvent } from './events';
 import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles, updateEffort } from './economy';
 import { abandonEmpty, assignGuardian, dailyDemography, findSite, marriages, maybeFission, migrate, newSettlement } from './demography';
@@ -113,11 +113,15 @@ export function createWorld(cfg: WorldConfig): World {
     newSettlement(world, rng, site);
   }
   const bands = world.settlements;
-  for (let i = 0; i < pop; i++) {
-    const s = bands[i % bands.length];
-    world.people.push(createFounder(world, rng, s.id));
+  if (pop < SMALL_GROUP) {
+    foundHouseholds(world, rng, first.id, pop);
+  } else {
+    for (let i = 0; i < pop; i++) {
+      const s = bands[i % bands.length];
+      world.people.push(createFounder(world, rng, s.id));
+    }
+    formFamilies(world, rng);
   }
-  formFamilies(world, rng);
   for (const s of bands) s.food = 30 * world.people.filter((p) => p.settlement === s.id).length;
   world.polity.capital = first.id;
 
@@ -137,6 +141,39 @@ export function createWorld(cfg: WorldConfig): World {
   }
   world.rng = rng.state;
   return world;
+}
+
+/** Below this size founders are drawn as households, so a handful of people is not all men or all elders. */
+const SMALL_GROUP = 50;
+
+/** Couples with children until the count is reached; a leftover single person joins as an adult. */
+function foundHouseholds(world: World, rng: Rng, settlement: number, pop: number): void {
+  let n = 0;
+  while (n < pop) {
+    if (pop - n === 1) {
+      world.people.push(createFounder(world, rng, settlement, { sex: rng.chance(0.5) ? 1 : 0, age: rng.range(18, 35) }));
+      break;
+    }
+    const wAge = rng.range(18, 34);
+    const man = createFounder(world, rng, settlement, { sex: 1, age: wAge + rng.range(0, 8) });
+    const woman = createFounder(world, rng, settlement, { sex: 0, age: wAge });
+    man.spouseId = woman.id;
+    woman.spouseId = man.id;
+    world.people.push(man, woman);
+    n += 2;
+    const kids = Math.min(pop - n, rng.int(4));
+    for (let i = 0; i < kids; i++) {
+      const k = createFounder(world, rng, settlement, {
+        sex: rng.chance(0.51) ? 1 : 0, age: rng.range(0, Math.min(16, wAge - 17)), surname: surnameOf(man),
+      });
+      k.motherId = woman.id;
+      k.fatherId = man.id;
+      woman.childIds.push(k.id);
+      man.childIds.push(k.id);
+      world.people.push(k);
+    }
+    n += kids;
+  }
 }
 
 function formFamilies(world: World, rng: Rng): void {

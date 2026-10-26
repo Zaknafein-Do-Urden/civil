@@ -164,3 +164,23 @@ table.list tr.click:hover { background: var(--panel-2); cursor: pointer; }
 .mini { display: grid; grid-template-columns: 1fr 40px; gap: 4px; align-items: center; font-size: 11px; }
 .mini .bar-val { text-align: right; color: var(--muted); }
 #tab-body { overflow-x: hidden; }
+
+/* encyclopedia */
+#wiki { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: center; justify-content: center; z-index: 20; }
+.wiki-box { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; width: min(960px, calc(100vw - 32px)); height: min(720px, calc(100vh - 32px)); display: flex; flex-direction: column; }
+.wiki-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.wiki-head input { flex: 1; }
+.wiki-main { flex: 1; display: flex; min-height: 0; }
+#wiki-nav { width: 200px; overflow-y: auto; padding: 4px 10px 12px; border-right: 1px solid var(--border); }
+#wiki-nav a { display: block; padding: 3px 6px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+#wiki-nav a:hover { background: var(--panel-2); }
+#wiki-nav a.on { background: var(--panel-2); color: var(--accent-2); }
+#wiki-body { flex: 1; overflow-y: auto; padding: 8px 18px 16px; line-height: 1.7; }
+#wiki-body h2 { margin: 2px 0 8px; font-size: 18px; color: var(--accent-2); }
+[data-wiki] { cursor: pointer; }
+a[data-wiki] { color: var(--accent); }
+.setup-head h1 button { font-size: 13px; vertical-align: middle; }
+@media (max-width: 640px) {
+  .wiki-main { flex-direction: column; }
+  #wiki-nav { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--border); }
+}

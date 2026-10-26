@@ -108,12 +108,12 @@ function blank(world: World, rng: Rng, sex: 0 | 1, birth: number, settlement: nu
 }
 
 /** A founder of the initial population. */
-export function createFounder(world: World, rng: Rng, settlement: number): Person {
-  const sex: 0 | 1 = rng.chance(0.5) ? 1 : 0;
+export function createFounder(world: World, rng: Rng, settlement: number, fixed?: { sex: 0 | 1; age: number; surname?: string }): Person {
+  const sex: 0 | 1 = fixed ? fixed.sex : rng.chance(0.5) ? 1 : 0;
   // Age pyramid of a forager band: many young, few old
-  const age = Math.min(70, -ln(1 - rng.next() * 0.95) * 18);
+  const age = fixed ? fixed.age : Math.min(70, -ln(1 - rng.next() * 0.95) * 18);
   const p = blank(world, rng, sex, world.day - Math.floor(age * DAYS_PER_YEAR), settlement);
-  p.name = randomName(rng, sex);
+  p.name = randomName(rng, sex, fixed?.surname);
   p.social = ability(rng);
   p.math = ability(rng);
   p.physical = ability(rng);

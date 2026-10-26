@@ -1,6 +1,7 @@
 import { DIMS, PRESETS, UNSPECIFIED } from '../core/rules';
 import type { CultureSetting, DimId } from '../core/rules';
 import { TERRAIN_NAMES, generateMap, isLand, siteScore, tilesWithin } from '../core/map';
+import './wikiView';
 import { DEFAULT_BAND_SIZE, createWorld, deserialize, serialize, step } from '../core/sim';
 import { ERAS } from '../core/tech';
 import { formatDate } from '../core/events';
@@ -95,7 +96,7 @@ function readCulture(): CultureSetting {
 }
 
 function readPopulation(): number {
-  return Math.max(200, Math.min(3000, +($('#population') as HTMLInputElement).value || 1000));
+  return Math.max(5, Math.min(3000, Math.round(+($('#population') as HTMLInputElement).value) || 1000));
 }
 
 function readBandSize(): number {
@@ -106,8 +107,9 @@ function readBandSize(): number {
 function updateBandHint(): void {
   const pop = readPopulation();
   const n = Math.max(1, Math.round(pop / readBandSize()));
+  const risk = pop < 30 ? '人数这么少，开局按几户人家生成；一两次意外死亡或连续生男/生女都可能让部落绝嗣，灭绝风险很高。' : '';
   $('#band-hint').textContent = n === 1
-    ? `${pop} 人全部住在同一个营地。`
+    ? `${pop} 人全部住在同一个营地。${risk}`
     : `石器时代的人靠采集狩猎为生，一块地养不活太多人，所以 ${pop} 人不会住在同一个村落，而是分成约 ${n} 个群落（每个约 ${Math.round(pop / n)} 人），散布在出生地附近，共同组成一个部落。附近地形太差时群落会少一些、每个人多一些。群落之后会自行壮大、分裂、迁徙；真实的狩猎采集营地通常 25–50 人。`;
 }
 

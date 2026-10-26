@@ -9,13 +9,13 @@
   <body>
     <section id="setup" class="screen">
       <header class="setup-head">
-        <h1>文明演化模拟器</h1>
+        <h1>文明演化模拟器 <button class="ghost" data-wiki="">百科</button></h1>
         <p>设定一个民族的初始文化倾向，然后看着上千个有能力、有性格、有需求的小人，自己演化出制度、领袖与科技。</p>
       </header>
       <div class="setup-body">
         <div class="setup-map">
           <canvas id="setup-map"></canvas>
-          <div class="map-legend">点击地图选择部落的出生地。每格约 6 公里宽（约 35 平方公里）；白圈是一个群落的日常活动范围（半径 2 格，约 12 公里，一天能走个来回）。</div>
+          <div class="map-legend">点击地图选择部落的出生地。<a data-wiki="map-colors">地图颜色说明</a>。每格约 6 公里宽（约 35 平方公里）；白圈是一个群落的日常活动范围（半径 2 格，约 12 公里，一天能走个来回）。</div>
           <div id="tile-info" class="tile-info"></div>
         </div>
         <div class="setup-side">
@@ -24,7 +24,7 @@
             <button id="reroll" class="ghost">换一个世界</button>
           </div>
           <div class="field-row">
-            <label>初始人口 <input id="population" type="number" min="200" max="3000" step="100" value="1000" /></label>
+            <label>初始人口 <input id="population" type="number" min="5" max="3000" step="5" value="1000" /></label>
             <button id="best-site" class="ghost">推荐出生地</button>
           </div>
           <div class="field-row">
@@ -63,6 +63,7 @@
           <button id="save" class="ghost">保存</button>
           <button id="export" class="ghost">导出</button>
           <button id="new-game" class="ghost">新游戏</button>
+          <button class="ghost" data-wiki="">百科</button>
         </div>
       </div>
       <div id="main">
