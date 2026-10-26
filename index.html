@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>文明演化模拟器</title>
+    <link rel="stylesheet" href="./src/ui/styles.css" />
+  </head>
+  <body>
+    <section id="setup" class="screen">
+      <header class="setup-head">
+        <h1>文明演化模拟器</h1>
+        <p>设定一个民族的初始文化倾向，然后看着上千个有能力、有性格、有需求的小人，自己演化出制度、领袖与科技。</p>
+      </header>
+      <div class="setup-body">
+        <div class="setup-map">
+          <canvas id="setup-map"></canvas>
+          <div class="map-legend">点击地图选择部落的出生地。白圈是初始活动范围。</div>
+          <div id="tile-info" class="tile-info"></div>
+        </div>
+        <div class="setup-side">
+          <div class="field-row">
+            <label>世界种子 <input id="seed" type="text" /></label>
+            <button id="reroll" class="ghost">换一个世界</button>
+          </div>
+          <div class="field-row">
+            <label>初始人口 <input id="population" type="number" min="200" max="3000" step="100" value="1000" /></label>
+            <button id="best-site" class="ghost">推荐出生地</button>
+          </div>
+          <div class="field-row">
+            <label>模板 <select id="preset"></select></label>
+          </div>
+          <p class="muted small" id="preset-desc"></p>
+          <h3>初始文化倾向 <span class="muted small">（不指定 = 由小人按自身利益自由演化）</span></h3>
+          <div id="dims"></div>
+          <div class="actions">
+            <button id="start" class="primary">开始模拟</button>
+            <button id="load-local" class="ghost">读取存档</button>
+            <label class="ghost file-btn">导入存档文件<input id="load-file" type="file" accept=".json" /></label>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="game" class="screen hidden">
+      <div id="topbar">
+        <div class="tb-group">
+          <strong id="tb-date"></strong>
+          <span id="tb-era" class="tag"></span>
+          <span id="tb-summary" class="muted"></span>
+        </div>
+        <div class="tb-group controls">
+          <button id="pause" title="空格键">⏸ 暂停</button>
+          <span class="speeds" id="speeds"></span>
+          <button id="ffwd" title="一直运行，直到下一个大事件">⏭ 快进到大事件</button>
+          <span id="tb-rate" class="muted small"></span>
+        </div>
+        <div class="tb-group">
+          <button id="save" class="ghost">保存</button>
+          <button id="export" class="ghost">导出</button>
+          <button id="new-game" class="ghost">新游戏</button>
+        </div>
+      </div>
+      <div id="main">
+        <div id="map-wrap">
+          <canvas id="map"></canvas>
+          <div id="map-tools">
+            <button data-overlay="terrain" class="on">地形</button>
+            <button data-overlay="resources">资源</button>
+            <button data-overlay="institutions">执行力</button>
+          </div>
+          <div id="map-hint" class="muted small">点击聚落查看居民；红色虚线圈 = 制度执行不到的聚落</div>
+        </div>
+        <aside id="panel">
+          <nav id="tabs"></nav>
+          <div id="tab-body"></div>
+        </aside>
+      </div>
+    </section>
+
+    <div id="modal" class="hidden"></div>
+    <div id="toast" class="hidden"></div>
+    <script type="module" src="./src/ui/main.ts"></script>
+  </body>
+</html>
