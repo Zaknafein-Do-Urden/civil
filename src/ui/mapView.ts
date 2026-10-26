@@ -21,7 +21,52 @@ export function settlementColor(id: number): string {
   return `hsl(${hue.toFixed(0)} 70% 55%)`;
 }
 
-export type Overlay = 'terrain' | 'resources' | 'institutions';
+export type Overlay = 'terrain' | 'stock' | 'owner' | 'density' | 'fertility' | 'institutions';
+
+/** Remaining wild food as a share of its cap, weighted by each resource's cap. NaN where nothing grows. */
+export function stockRatio(t: Tile): number {
+  const cap = t.plantsCap + t.gameCap + t.fishCap;
+  return cap > 0 ? (t.plants + t.game + t.fish) / cap : NaN;
+}
+
+/** Red (exhausted) → yellow → green (untouched). */
+function rampRYG(v: number): string {
+  const x = Math.max(0, Math.min(1, v));
+  const hue = x * 120;
+  return `hsl(${hue.toFixed(0)} 65% ${(38 + 10 * (1 - Math.abs(x - 0.5) * 2)).toFixed(0)}%)`;
+}
+
+/** Dark → bright single-hue ramp. */
+function ramp(v: number, hue: number): string {
+  const x = Math.max(0, Math.min(1, v));
+  return `hsl(${hue} ${(25 + 50 * x).toFixed(0)}% ${(18 + 45 * x).toFixed(0)}%)`;
+}
+
+const DENSITY_MAX = 10; // people per tile at the top of the scale
+
+const NO_DATA = '#3a3f47';
+
+function swatches(items: [string, string][]): string {
+  return items.map(([c, l]) => `<span><i style="background:${c}"></i>${l}</span>`).join('');
+}
+
+/** Legend HTML for the game-screen map layers. */
+export function legendHtml(o: Overlay): string {
+  switch (o) {
+    case 'stock':
+      return `<b>资源存量</b>（野生植物＋猎物＋鱼 现存÷上限）${swatches([[rampRYG(0), '耗尽'], [rampRYG(0.5), '一半'], [rampRYG(1), '未开发'], [NO_DATA, '无资源']])}<span class="muted">谷/畜/铜/锡 = 特殊资源</span>`;
+    case 'owner':
+      return `<b>归属</b>${swatches([[settlementColor(1), '各聚落领地'], [NO_DATA, '无主之地']])}<span class="muted">实心＝聚落中心</span>`;
+    case 'density':
+      return `<b>人口密度</b>（聚落人口平摊到领地，人/格）${swatches([[NO_DATA, '0'], [ramp(0.2, 20), '2'], [ramp(0.5, 20), '5'], [ramp(1, 20), `≥${DENSITY_MAX}`]])}`;
+    case 'fertility':
+      return `<b>肥力</b>${swatches([[NO_DATA, '不可耕'], [ramp(0.25, 95), '低'], [ramp(1, 95), '高'], ['rgba(240,200,60,0.9)', '已开垦']])}`;
+    case 'institutions':
+      return `<b>执行力</b>：地形底图；红色虚线圈＝制度执行不到的聚落`;
+    default:
+      return `<b>地形</b>：底色为地形，黄色＝农田，彩色＝聚落领地，蓝线＝河流`;
+  }
+}
 
 export class MapView {
   size = 10;
@@ -110,19 +155,47 @@ export class MapView {
     const s = this.size;
     const map = this.map;
 
+    const layer = world ? this.overlay : 'terrain';
+    const thematic = layer === 'stock' || layer === 'owner' || layer === 'density' || layer === 'fertility';
+    const density = layer === 'density' && world ? densityByTile(world) : undefined;
     for (const t of map.tiles) {
       const [cx, cy] = this.center(t);
       this.hex(ctx, cx, cy, s + 0.5);
-      ctx.fillStyle = TERRAIN_COLOR[t.terrain];
+      // thematic layers colour land (and lakes, which hold fish, on the stock layer); water stays dimmed terrain
+      if (!thematic || !(isLand(t) || (layer === 'stock' && t.terrain === 'lake'))) {
+        ctx.fillStyle = TERRAIN_COLOR[t.terrain];
+        if (thematic) ctx.globalAlpha = 0.5;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        if (!thematic && t.plots > 0) {
+          ctx.fillStyle = `rgba(240, 200, 60, ${Math.min(0.75, 0.2 + t.plots / Math.max(1, t.maxPlots))})`;
+          ctx.fill();
+        }
+        continue;
+      }
+      if (layer === 'stock') {
+        const r = stockRatio(t);
+        ctx.fillStyle = Number.isNaN(r) ? NO_DATA : rampRYG(r);
+      } else if (layer === 'owner') {
+        ctx.fillStyle = t.owner >= 0 ? settlementColor(t.owner) : NO_DATA;
+        if (t.owner >= 0) ctx.globalAlpha = 0.6;
+      } else if (layer === 'density') {
+        const d = density![t.id];
+        ctx.fillStyle = d > 0 ? ramp(d / DENSITY_MAX, 20) : NO_DATA;
+      } else {
+        ctx.fillStyle = t.maxPlots > 0 ? ramp(t.fertility, 95) : NO_DATA;
+      }
       ctx.fill();
-      if (t.plots > 0) {
-        ctx.fillStyle = `rgba(240, 200, 60, ${Math.min(0.75, 0.2 + t.plots / Math.max(1, t.maxPlots))})`;
+      ctx.globalAlpha = 1;
+      if (layer === 'fertility' && t.plots > 0) {
+        this.hex(ctx, cx, cy, s * 0.45 * Math.sqrt(t.plots / Math.max(1, t.maxPlots)) + 1);
+        ctx.fillStyle = 'rgba(240, 200, 60, 0.9)';
         ctx.fill();
       }
     }
 
     // territory tint
-    if (world) {
+    if (world && !thematic) {
       for (const st of world.settlements) {
         if (!st.alive) continue;
         ctx.fillStyle = settlementColor(st.id);
@@ -151,7 +224,7 @@ export class MapView {
       ctx.stroke();
     }
 
-    if (this.overlay === 'resources' && s >= 6) {
+    if (layer === 'stock' && s >= 6) {
       ctx.font = `${Math.max(7, s * 0.8).toFixed(0)}px system-ui, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
@@ -179,12 +252,12 @@ export class MapView {
         const r = Math.max(3, Math.min(s * 1.6, 2 + Math.sqrt(st.pop) * 0.45));
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.fillStyle = settlementColor(st.id);
+        ctx.fillStyle = layer === 'owner' || !thematic ? settlementColor(st.id) : 'rgba(255,255,255,0.85)';
         ctx.fill();
         ctx.lineWidth = st.id === cap ? 2.5 : 1;
         ctx.strokeStyle = st.id === cap ? '#ffd54a' : 'rgba(0,0,0,0.7)';
         ctx.stroke();
-        if (this.overlay === 'institutions' && st.enforcement < world.params.enforceThreshold) {
+        if (layer === 'institutions' && st.enforcement < world.params.enforceThreshold) {
           ctx.strokeStyle = '#ff5252';
           ctx.setLineDash([3, 2]);
           ctx.beginPath();
@@ -232,4 +305,15 @@ export class MapView {
       }
     }
   }
+}
+
+/** People per tile: each settlement's population spread evenly over its territory. */
+function densityByTile(world: World): Float32Array {
+  const d = new Float32Array(world.map.tiles.length);
+  for (const st of world.settlements) {
+    if (!st.alive || !st.territory.length) continue;
+    const v = st.pop / st.territory.length;
+    for (const id of st.territory) d[id] += v;
+  }
+  return d;
 }

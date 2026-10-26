@@ -70,10 +70,14 @@
           <canvas id="map"></canvas>
           <div id="map-tools">
             <button data-overlay="terrain" class="on">地形</button>
-            <button data-overlay="resources">资源</button>
+            <button data-overlay="stock">资源存量</button>
+            <button data-overlay="owner">归属</button>
+            <button data-overlay="density">人口密度</button>
+            <button data-overlay="fertility">肥力</button>
             <button data-overlay="institutions">执行力</button>
           </div>
-          <div id="map-hint" class="muted small">点击聚落查看居民；红色虚线圈 = 制度执行不到的聚落</div>
+          <div id="map-legend"></div>
+          <div id="map-hint" class="muted small">点击聚落中心查看聚落，点击其他任何地块查看地块详情</div>
         </div>
         <aside id="panel">
           <nav id="tabs"></nav>

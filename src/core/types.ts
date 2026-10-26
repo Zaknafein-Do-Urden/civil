@@ -1,6 +1,7 @@
 import type { Params } from './params';
 import type { CultureSetting } from './rules';
 import type { RngState } from './rng';
+import type { TileHistory } from './tiles';
 
 export const DAYS_PER_YEAR = 360;
 export const DAYS_PER_MONTH = 30;
@@ -260,4 +261,6 @@ export interface World {
   pending: Command[];
   commandLog: Command[];
   notables: NotableRecord[];
+  /** Yearly per-tile resource/ownership snapshots, last 100 years (tiles.ts). */
+  tileHistory: TileHistory;
 }
