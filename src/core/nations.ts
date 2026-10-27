@@ -13,7 +13,7 @@ import type { CultureSetting, DimId } from './rules';
 import { clamp } from './dmath';
 import { hexDistance, isLand, siteScore, tilesWithin } from './map';
 import type { Rng } from './rng';
-import type { Person, Polity, PolityScope, World } from './types';
+import type { Person, Polity, PolityScope, World, YearAcc } from './types';
 
 export const PLAYER = 0;
 
@@ -24,6 +24,7 @@ const BAND_DEFAULT: Record<string, string> = {
 };
 
 export const emptyAcc = () => ({ foodProduced: 0, foodDecayed: 0, coldSum: 0, hungerDays: 0, personDays: 0 });
+export const emptyYearAcc = (): YearAcc => ({ births: 0, deaths: 0, starved: 0, exiled: 0, hours: new Array<number>(NOCC).fill(0), workDays: new Array<number>(NOCC).fill(0) });
 
 
 const NAME_A = '有熊虞夏商姜姬嬴姒妫风偃允祁己任芈曹董彭秃斟'.split('');
@@ -203,6 +204,6 @@ export function newScope(rng: Rng, id: number, culture: CultureSetting): PolityS
     lastMonth: emptyAcc(),
     era: 0,
     stats: [],
-    yearAcc: { births: 0, deaths: 0, starved: 0 },
+    yearAcc: emptyYearAcc(),
   };
 }

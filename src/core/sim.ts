@@ -9,7 +9,8 @@ import { generateMap, hexDistance, isLand, siteScore } from './map';
 import { ERAS, TECHS, availableTechs, computeEra, monthlyResearch } from './tech';
 import { addBio, ageYears, createFounder, personById, surnameOf } from './person';
 import { addEvent } from './events';
-import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles, updateEffort } from './economy';
+import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles } from './economy';
+import { exclusion, migrateLabor, updateLabor } from './labor';
 import { abandonEmpty, assignGuardian, dailyDemography, findSite, marriages, maybeFission, migrate, newSettlement } from './demography';
 import {
   appointAdmins, chooseCouncil, chooseLeader, corruption, ensureLeader, institutionalChange, maybeElection, payAdmins,
@@ -21,7 +22,7 @@ import { updateDemand, yearStats } from './stats';
 import { emptyTileHistory, recordTileHistory } from './tiles';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
 import type { Command, Person, World } from './types';
-import { PLAYER, emptyAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName } from './nations';
+import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName } from './nations';
 import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
 
 /** Typical forager camp size; real local bands are 25–50 people (DESIGN.md §7). */
@@ -147,7 +148,6 @@ function foundTribe(world: World, rng: Rng, start: number, pop: number, bandSize
   const pm = plannerMath(world);
   for (const s of bands) {
     chooseJobs(world, rng, s, groups[s.id], pm, 0);
-    updateEffort(world, s, groups[s.id], 0);
   }
 }
 
@@ -300,7 +300,6 @@ function monthly(world: World, rng: Rng, groups: Person[][]): void {
   payAdmins(world, rng);
   appointAdmins(world);
 
-  const admins = world.people.filter((p) => p.occ === OCC.admin).length;
   const pm = plannerMath(world);
   const n = world.settlements.length;
   for (let i = 0; i < n; i++) {
@@ -310,6 +309,8 @@ function monthly(world: World, rng: Rng, groups: Person[][]): void {
     for (const p of people) {
       p.output = p.outputAcc;
       p.outputAcc = 0;
+      p.avgHours = p.hoursAcc / DAYS_PER_MONTH;
+      p.hoursAcc = 0;
     }
     let funds = 0;
     if (s.practiced[D.allocation] === ALLOC.exchange) {
@@ -317,11 +318,11 @@ function monthly(world: World, rng: Rng, groups: Person[][]): void {
       funds = patronage(world, s, people);
       charity(world, people);
     }
-    updateEffort(world, s, people, (admins * people.length) / Math.max(1, world.people.length));
+    updateLabor(world, rng, s, people);
     chooseJobs(world, rng, s, people, pm, funds);
     marriages(world, rng, people);
     const ns = maybeFission(world, rng, s, people);
-    if (ns || migrate(world, rng, s, people, groups)) {
+    if (ns || migrate(world, rng, s, people, groups) || exclusion(world, rng, s, people, groups)) {
       for (let j = 0; j < world.settlements.length; j++) groups[j] = [];
       for (const p of world.people) groups[p.settlement].push(p);
     }
@@ -373,7 +374,7 @@ function yearly(world: World, rng: Rng): void {
   if (st.pop > 0 && st.starved / st.pop > 0.05) {
     addEvent(world, 'famine', true, '大饥荒', `过去一年有 ${st.starved} 人死于饥寒，占人口 ${((st.starved / st.pop) * 100).toFixed(1)}%。`);
   }
-  world.yearAcc = { births: 0, deaths: 0, starved: 0 };
+  world.yearAcc = emptyYearAcc();
 }
 
 export function runDays(world: World, days: number): void {
@@ -405,6 +406,7 @@ export function deserialize(json: string): World {
       t.inventor.push(-1);
     }
   }
+  migrateLabor(w);
   w.tileHistory ??= emptyTileHistory(); // saves from before tile history
   return w;
 }

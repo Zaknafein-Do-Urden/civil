@@ -8,6 +8,7 @@ export interface Params {
   fishRate: number;
   farmRate: number;
   herdRate: number;
+  farmLabor: number;
   toolRate: number;
   clothesRate: number;
   foodDecay: number;
@@ -16,9 +17,21 @@ export interface Params {
   toolBonus: number;
   plantRegen: number;
   gameRegen: number;
-  // Incentives
-  freeRide: number;
+  // Labor and leisure (DESIGN.md §4.1)
+  maxHours: number;
+  fatigue: number;
+  bufferDays: number;
+  wealthStatus: number;
+  generosity: number;
+  leisureJoy: number;
+  leisureResearch: number;
+  // Reputation, monitoring and exclusion
   dunbar: number;
+  reciprocity: number;
+  punishment: number;
+  exileRep: number;
+  exileMonths: number;
+  outsiderRep: number;
   // Demography
   fertility: number;
   baseMortality: number;
@@ -52,21 +65,33 @@ export interface Params {
 
 export const DEFAULT_PARAMS: Params = {
   foodNeedAdult: 1,
-  gatherRate: 2.5,
-  huntRate: 3.0,
-  fishRate: 2.8,
-  farmRate: 4.0,
-  herdRate: 3.2,
-  toolRate: 0.12,
-  clothesRate: 0.08,
-  foodDecay: 0.004,
+  gatherRate: 0.55,
+  huntRate: 0.65,
+  fishRate: 0.6,
+  farmRate: 1.0,
+  herdRate: 0.6,
+  farmLabor: 12,
+  toolRate: 0.03,
+  clothesRate: 0.02,
+  foodDecay: 0.01,
   abilityWeight: 0.5,
   skillGain: 0.0015,
   toolBonus: 0.4,
   plantRegen: 0.02,
   gameRegen: 0.012,
-  freeRide: 0.6,
+  maxHours: 12,
+  fatigue: 0.09,
+  bufferDays: 60,
+  wealthStatus: 0.3,
+  generosity: 0.3,
+  leisureJoy: 0.2,
+  leisureResearch: 0.03,
   dunbar: 150,
+  reciprocity: 0.6,
+  punishment: 0.8,
+  exileRep: 0.45,
+  exileMonths: 12,
+  outsiderRep: 0.6,
   fertility: 0.3,
   baseMortality: 1,
   starvationDamage: 0.04,
@@ -82,8 +107,8 @@ export const DEFAULT_PARAMS: Params = {
   interestRate: 0.012,
   conformRate: 0.02,
   experienceRate: 0.012,
-  lbdRate: 0.0002,
-  researchRate: 0.004,
+  lbdRate: 0.0003,
+  researchRate: 0.006,
   patronShare: 0.01,
   contactRange: 8,
   warPropensity: 1,
@@ -104,21 +129,33 @@ export interface ParamDef {
 
 export const PARAM_DEFS: ParamDef[] = [
   { key: 'foodNeedAdult', name: '成人日需食物', desc: '成年人每天需要的食物单位', min: 0.5, max: 2, step: 0.1 },
-  { key: 'gatherRate', name: '采集产出', desc: '普通人每天采集的食物（资源充足、工具完好时）', min: 0.5, max: 4, step: 0.1 },
-  { key: 'huntRate', name: '狩猎产出', desc: '普通猎人每天的食物', min: 0.5, max: 4, step: 0.1 },
-  { key: 'fishRate', name: '捕鱼产出', desc: '普通渔民每天的食物', min: 0.5, max: 4, step: 0.1 },
-  { key: 'farmRate', name: '耕作产出', desc: '一块耕地一个农民每天的平均食物', min: 0.5, max: 6, step: 0.1 },
-  { key: 'herdRate', name: '放牧产出', desc: '普通牧民每天的食物', min: 0.5, max: 5, step: 0.1 },
-  { key: 'toolRate', name: '工具产出', desc: '工匠每天制作的工具件数', min: 0.02, max: 0.5, step: 0.01 },
-  { key: 'clothesRate', name: '衣物产出', desc: '缝制者每天制作的衣物件数', min: 0.02, max: 0.5, step: 0.01 },
+  { key: 'gatherRate', name: '采集产出', desc: '普通人每小时采集的食物（资源充足、工具完好时）', min: 0.1, max: 2, step: 0.05 },
+  { key: 'huntRate', name: '狩猎产出', desc: '普通猎人每小时的食物（猎物充足时）', min: 0.1, max: 2, step: 0.05 },
+  { key: 'fishRate', name: '捕鱼产出', desc: '普通渔民每小时的食物（鱼群充足时）', min: 0.1, max: 2, step: 0.05 },
+  { key: 'farmRate', name: '耕作产出', desc: '一个农民在一块耕地上每小时的平均食物（生长季更高，冬季为零）', min: 0.1, max: 3, step: 0.05 },
+  { key: 'farmLabor', name: '精耕饱和', desc: '每块耕地每天投入多少工时（乘以能力）时，每小时的收成降到一半；越小，人多地少时越要起早贪黑', min: 2, max: 40, step: 1 },
+  { key: 'herdRate', name: '放牧产出', desc: '普通牧民每小时的食物', min: 0.1, max: 2, step: 0.05 },
+  { key: 'toolRate', name: '工具产出', desc: '工匠每小时制作的工具件数', min: 0.005, max: 0.1, step: 0.001 },
+  { key: 'clothesRate', name: '衣物产出', desc: '缝制者每小时制作的衣物件数', min: 0.005, max: 0.1, step: 0.001 },
   { key: 'foodDecay', name: '食物腐坏率', desc: '储存食物每天损失的比例', min: 0, max: 0.02, step: 0.001 },
   { key: 'abilityWeight', name: '能力影响', desc: '能力偏离均值对产出的影响强度', min: 0, max: 1.5, step: 0.05 },
-  { key: 'skillGain', name: '熟练积累', desc: '每天工作积累的熟练度', min: 0, max: 0.01, step: 0.0005 },
+  { key: 'skillGain', name: '熟练积累', desc: '每天干满 8 小时积累的熟练度', min: 0, max: 0.01, step: 0.0005 },
   { key: 'toolBonus', name: '工具加成', desc: '完好工具带来的产出加成', min: 0, max: 1.5, step: 0.05 },
   { key: 'plantRegen', name: '植物再生', desc: '野生植物的日再生率', min: 0.001, max: 0.05, step: 0.001 },
   { key: 'gameRegen', name: '猎物再生', desc: '猎物的日再生率', min: 0.001, max: 0.05, step: 0.001 },
-  { key: 'freeRide', name: '搭便车强度', desc: '产出不归自己且缺乏监督时，努力程度下降的上限', min: 0, max: 1, step: 0.05 },
-  { key: 'dunbar', name: '邓巴数', desc: '共享群体中可以相互监督的规模', min: 50, max: 400, step: 10 },
+  { key: 'maxHours', name: '每日最多工时', desc: '一天里可用于劳动的小时数，其余是闲暇', min: 6, max: 16, step: 1 },
+  { key: 'fatigue', name: '劳累成本', desc: '第 h 小时劳动的边际代价约为 系数×h（以食物计）；越高人们越早收工。勤劳的人代价低', min: 0.01, max: 0.5, step: 0.01 },
+  { key: 'bufferDays', name: '安全存粮天数', desc: '存粮低于这么多天（加上农闲季节天数，但不超过食物保存期限）时，多干活的价值明显上升', min: 0, max: 200, step: 5 },
+  { key: 'wealthStatus', name: '财富地位', desc: '交换社会中多积累财富本身带来的地位价值（乘以野心），让人吃饱后仍继续干活', min: 0, max: 2, step: 0.05 },
+  { key: 'generosity', name: '慷慨声望', desc: '共享群体中看得见的贡献带来的声望价值（乘以文化对共享的重视和观察准确度）', min: 0, max: 2, step: 0.05 },
+  { key: 'leisureJoy', name: '闲暇幸福', desc: '闲暇占可用时间的比例对幸福感的影响', min: 0, max: 1, step: 0.05 },
+  { key: 'leisureResearch', name: '闲暇研究', desc: '闲暇中捣鼓的一小时相当于专职研究一小时的比例（再乘以数学能力）', min: 0, max: 0.2, step: 0.005 },
+  { key: 'dunbar', name: '邓巴数', desc: '观察贡献的准确度在群体达到这个规模时降到一半（准确度 = 1/(1+(人数/邓巴数)²)）', min: 50, max: 400, step: 10 },
+  { key: 'reciprocity', name: '条件互惠', desc: '公有聚落按声誉分配的强度：声誉低的人从公共储备分到的更少，也因此更愿意干活', min: 0, max: 1, step: 0.05 },
+  { key: 'punishment', name: '官吏惩罚', desc: '统筹体制下官吏监督到的偷懒会受罚的强度（乘以官吏覆盖率）', min: 0, max: 1.5, step: 0.05 },
+  { key: 'exileRep', name: '排挤门槛', desc: '声誉长期低于此值的人会被排挤出公有聚落', min: 0, max: 1, step: 0.05 },
+  { key: 'exileMonths', name: '排挤忍耐', desc: '声誉连续低于门槛多少个月才会被排挤', min: 1, max: 60, step: 1 },
+  { key: 'outsiderRep', name: '外来者声誉', desc: '迁入或被排挤到别处的人初始的声誉，需要靠贡献重新挣得', min: 0.2, max: 1, step: 0.05 },
   { key: 'fertility', name: '生育率', desc: '已婚育龄妇女每年生育概率', min: 0.05, max: 0.6, step: 0.01 },
   { key: 'baseMortality', name: '基础死亡率倍数', desc: '年龄相关死亡率的整体倍数', min: 0.2, max: 3, step: 0.05 },
   { key: 'starvationDamage', name: '饥饿伤害', desc: '每天缺粮对健康的损伤', min: 0, max: 0.2, step: 0.005 },
@@ -134,8 +171,8 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'interestRate', name: '利益驱动', desc: '个人利益改变倾向的速度（每月）', min: 0, max: 0.2, step: 0.005 },
   { key: 'conformRate', name: '从众', desc: '向周围人看齐的速度（每月）', min: 0, max: 0.2, step: 0.005 },
   { key: 'experienceRate', name: '经历', desc: '受苦经历让人否定现行制度的速度（每月）', min: 0, max: 0.2, step: 0.005 },
-  { key: 'lbdRate', name: '干中学', desc: '从业者每天为相关科技积累的研究量', min: 0, max: 0.002, step: 0.00001 },
-  { key: 'researchRate', name: '研究产出', desc: '专职研究者每天的研究量', min: 0, max: 0.2, step: 0.005 },
+  { key: 'lbdRate', name: '干中学', desc: '从业者每干满 8 小时为相关科技积累的研究量', min: 0, max: 0.002, step: 0.00001 },
+  { key: 'researchRate', name: '研究产出', desc: '专职研究者每干满 8 小时的研究量', min: 0, max: 0.2, step: 0.005 },
   { key: 'patronShare', name: '资助意愿', desc: '富人每月拿出多余财富资助研究的比例', min: 0, max: 0.3, step: 0.01 },
   { key: 'contactRange', name: '接触距离', desc: '两国聚落相距多少格以内即算接触', min: 2, max: 30, step: 1 },
   { key: 'warPropensity', name: '战争倾向', desc: '每个人主战意愿（几率比）的倍数；0 表示永不开战', min: 0, max: 3, step: 0.1 },

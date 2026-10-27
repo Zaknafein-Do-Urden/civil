@@ -88,12 +88,12 @@ const overview: Tab = {
     const lm = w.lastMonth;
     const tinkers = w.people.filter((p) => p.occ === OCC.tinker).length;
     let griev = 0;
-    let eff = 0;
+    let hours = 0;
     let workers = 0;
     for (const p of w.people) {
       griev += p.grievance;
       if (p.occ >= 0) {
-        eff += p.effort;
+        hours += p.avgHours;
         workers++;
       }
     }
@@ -106,7 +106,8 @@ const overview: Tab = {
       kpi('合法性', pct(w.polity.legitimacy)),
       kpi('平均不满', pct(griev / Math.max(1, w.people.length))),
       kpi('人均日产粮', lm.personDays ? (lm.foodProduced / lm.personDays).toFixed(2) : '—'),
-      kpi('平均努力', pct(eff / Math.max(1, workers))),
+      kpi('平均工时', `${(hours / Math.max(1, workers)).toFixed(1)} 小时/天`),
+      kpi('外来者', String(w.people.filter((p) => p.outsider).length)),
       kpi('基尼系数', last ? last.gini.toFixed(2) : '—'),
       kpi('专职研究者', String(tinkers)),
       kpi('官吏', String(w.people.filter((p) => p.occ === OCC.admin).length)),
@@ -122,7 +123,7 @@ const overview: Tab = {
       { name: '健康', color: '#5cd18b', values: s.map((x) => x.health) },
       { name: '幸福', color: '#ffd54a', values: s.map((x) => x.happiness) },
       { name: '不满', color: '#ff6b6b', values: s.map((x) => x.grievance) },
-      { name: '努力', color: '#b39ddb', values: s.map((x) => x.effort) },
+      { name: '闲暇占比', color: '#b39ddb', values: s.map((x) => (x.hours === undefined ? 0 : 1 - x.hours / w.params.maxHours)) },
     ], { min: 0, max: 1 });
     drawChart(el.querySelector('#ch-pol')!, xs, [
       { name: '基尼系数', color: '#ff8a65', values: s.map((x) => x.gini) },
@@ -131,6 +132,8 @@ const overview: Tab = {
     drawChart(el.querySelector('#ch-prod')!, xs, [
       { name: '人均日产粮', color: '#f9a825', values: s.map((x) => x.foodPerCap) },
       { name: '饥寒死亡/百人', color: '#ff6b6b', values: s.map((x) => (x.pop ? (x.starved / x.pop) * 100 : 0)) },
+      { name: '平均工时', color: '#b39ddb', values: s.map((x) => x.hours ?? 0) },
+      { name: '被排挤/千人', color: '#8d98a8', values: s.map((x) => (x.pop ? ((x.exiled ?? 0) / x.pop) * 1000 : 0)) },
     ], { min: 0 });
     drawChart(el.querySelector('#ch-occ')!, xs,
       OCC_NAMES.map((n, i) => ({ name: n, color: OCC_COLORS[i], values: s.map((x) => x.occ[i]) })), { stacked: true });
@@ -446,8 +449,11 @@ function personDetail(w: World, p: Person): string {
     <div class="muted small">居于${settlementLink(w, p.settlement)} · ${p.occ >= 0 ? OCC_NAMES[p.occ] : age < 16 ? '儿童' : '不再劳动'} · 威望 ${p.prestige.toFixed(2)}</div>
     <div class="grid2">
       <div><h4>能力</h4>${bar('社交', p.social / 100, '#ab47bc', p.social.toFixed(0))}${bar('数学', p.math / 100, '#00acc1', p.math.toFixed(0))}${bar('体能', p.physical / 100, '#c0632b', p.physical.toFixed(0))}
-        <h4>性格</h4>${bar('野心', p.ambition, '#ff8a65')}${bar('诚信', p.integrity, '#5cd18b')}${bar('冒险', p.risk, '#ffd54a')}${bar('从众', p.conformity, '#8d98a8')}</div>
-      <div><h4>状态</h4>${bar('健康', p.health, '#5cd18b')}${bar('饥饿', p.hunger, '#ff6b6b')}${bar('寒冷', p.cold, '#90caf9')}${bar('幸福', p.happiness, '#ffd54a')}${bar('不满', p.grievance, '#ff8a65')}${bar('努力', p.effort, '#b39ddb')}
+        <h4>性格</h4>${bar('野心', p.ambition, '#ff8a65')}${bar('勤劳', p.diligence, '#b39ddb')}${bar('诚信', p.integrity, '#5cd18b')}${bar('冒险', p.risk, '#ffd54a')}${bar('从众', p.conformity, '#8d98a8')}</div>
+      <div><h4>状态</h4>${bar('健康', p.health, '#5cd18b')}${bar('饥饿', p.hunger, '#ff6b6b')}${bar('寒冷', p.cold, '#90caf9')}${bar('幸福', p.happiness, '#ffd54a')}${bar('不满', p.grievance, '#ff8a65')}
+        <h4>劳动与声誉</h4><div class="small">今天工作 ${p.hours.toFixed(1)} 小时 · 上月平均 ${p.avgHours.toFixed(1)} 小时/天 · 闲暇 ${Math.max(0, w.params.maxHours - p.avgHours).toFixed(1)} 小时/天</div>
+        ${bar('声誉', Math.min(1, p.reputation / 1.5), p.reputation < w.params.exileRep ? '#ff6b6b' : '#4fb3ff', p.reputation.toFixed(2))}
+        <div class="small">${p.outsider ? '<span style="color:var(--warn)">外来者</span>，还没在这里挣得认可' : '本地人'}${p.lowRepMonths > 0 ? ` · 已连续 ${p.lowRepMonths} 个月被看作不出力` : ''}</div>
         <h4>财产</h4><div class="small">食物 ${p.food.toFixed(0)}（${(p.food / need).toFixed(0)} 天）· 工具 ${p.tools.toFixed(1)} · 衣物 ${p.clothes.toFixed(1)} · 土地 ${p.plots.toFixed(1)} 块</div>
         <div class="small">上月产出 ${p.output.toFixed(0)} · 财富 ${wealth(p, s).toFixed(0)}</div>
         <div class="small">熟练：${skills.map(([v, i]) => `${OCC_NAMES[i]} ${pct(v)}`).join('，') || '无'}</div></div>

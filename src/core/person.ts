@@ -82,10 +82,17 @@ function blank(world: World, rng: Rng, sex: 0 | 1, birth: number, settlement: nu
     integrity: 0.5,
     risk: 0.5,
     conformity: 0.5,
+    diligence: 0.5,
     skills: new Array(NOCC).fill(0),
     occ: NO_OCC,
     parentOcc: NO_OCC,
     effort: 1,
+    hours: 6,
+    hoursAcc: 0,
+    avgHours: 6,
+    reputation: 1,
+    lowRepMonths: 0,
+    outsider: false,
     food: 10,
     tools: 0,
     clothes: 0,
@@ -121,6 +128,7 @@ export function createFounder(world: World, rng: Rng, settlement: number, fixed?
   p.integrity = trait(rng);
   p.risk = trait(rng);
   p.conformity = trait(rng);
+  p.diligence = trait(rng);
   p.prefs = initPrefs(rng, world.culture);
   p.prestige = (p.social - 50) / 50 + Math.min(age, 50) / 50;
   p.food = 20;
@@ -147,6 +155,7 @@ export function createChild(world: World, rng: Rng, mother: Person, father: Pers
   p.integrity = inherit(mother.integrity, f.integrity, 0.2, 0.5, 0, 1);
   p.risk = inherit(mother.risk, f.risk, 0.2, 0.5, 0, 1);
   p.conformity = inherit(mother.conformity, f.conformity, 0.2, 0.5, 0, 1);
+  p.diligence = inherit(mother.diligence, f.diligence, 0.2, 0.5, 0, 1);
   // Culture is learned from parents
   p.prefs = mother.prefs.map((row, d) => normalize(row.map((v, i) => (v + f.prefs[d][i]) / 2 + rng.next() * 0.05)));
   p.parentOcc = father && father.occ >= 0 ? father.occ : mother.occ;
