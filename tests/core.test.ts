@@ -90,3 +90,50 @@ describe('tile history', () => {
     expect(w.tileHistory.days.length).toBe(TILE_HISTORY_YEARS);
   });
 });
+
+describe('multiple polities', () => {
+  it('places NPC tribes that are simulated by the same rules', () => {
+    const w = createWorld({ seed: 'npc', population: 400, npcCount: 3, npcPopulation: 150 });
+    expect(w.npcs.length).toBe(3);
+    for (const sc of w.npcs) {
+      expect(sc.polity.alive).toBe(true);
+      expect(sc.polity.leaderId).toBeGreaterThan(0);
+      expect(w.settlements.some((s) => s.alive && s.polity === sc.polity.id)).toBe(true);
+    }
+    runDays(w, 2 * DAYS_PER_YEAR);
+    for (const sc of w.npcs) expect(sc.stats.length).toBe(2);
+    // every person lives in a settlement of a living polity
+    const alive = new Set([w.polity, ...w.npcs.map((n) => n.polity)].filter((p) => p.alive).map((p) => p.id));
+    for (const p of w.people) expect(alive.has(w.settlements[p.settlement].polity)).toBe(true);
+  });
+
+  it('brings neighbours into contact', () => {
+    const w = createWorld({ seed: 'npc', population: 400, npcCount: 3, npcPopulation: 150 });
+    runDays(w, 3 * DAYS_PER_YEAR);
+    expect(w.relations.length).toBe(6);
+    expect(w.relations.some((r) => r.status !== 'none')).toBe(true);
+    expect(w.events.some((e) => e.title.startsWith('首次接触'))).toBe(true);
+  });
+
+  it('stays deterministic through war and a save/load round trip', () => {
+    const make = () => {
+      const w = createWorld({
+        seed: 'war', population: 400, npcCount: 2, npcPopulation: 200,
+        params: { contactRange: 40, campaignRange: 40, warPropensity: 3 },
+      });
+      issue(w, { day: 0, type: 'warMood', value: 1 });
+      return w;
+    };
+    const a = make();
+    runDays(a, 10 * DAYS_PER_YEAR);
+    expect(a.warSeq).toBeGreaterThan(0);
+    expect(a.commandLog.length).toBe(1);
+    const b = deserialize(serialize(a));
+    const c = make();
+    runDays(c, 10 * DAYS_PER_YEAR);
+    expect(stateHash(c)).toBe(stateHash(a));
+    runDays(a, 2 * DAYS_PER_YEAR);
+    runDays(b, 2 * DAYS_PER_YEAR);
+    expect(stateHash(b)).toBe(stateHash(a));
+  });
+});

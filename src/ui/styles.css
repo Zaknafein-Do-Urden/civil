@@ -191,3 +191,4 @@ a[data-wiki] { color: var(--accent); }
   .wiki-main { flex-direction: column; }
   #wiki-nav { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--border); }
 }
+#focus-banner { padding: 6px 10px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 12px; }

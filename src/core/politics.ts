@@ -427,7 +427,7 @@ function landTransfer(world: World, s: Settlement, people: Person[], to: number)
   }
 }
 
-function powerWeights(world: World): Map<number, number> {
+export function powerWeights(world: World): Map<number, number> {
   const pol = world.polity;
   const auth = pol.institutions[D.authority];
   const w = new Map<number, number>();

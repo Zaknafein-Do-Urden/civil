@@ -2,11 +2,11 @@
 
 import { DEFAULT_PARAMS } from './params';
 import type { Params } from './params';
-import { ALLOC, D, DIMS, UNSPECIFIED, optIndex } from './rules';
+import { ALLOC, D, UNSPECIFIED } from './rules';
 import type { CultureSetting } from './rules';
 import { Rng, seedRng } from './rng';
-import { generateMap, isLand, siteScore } from './map';
-import { ERAS, TECHS, availableTechs, computeEra, initTech, monthlyResearch } from './tech';
+import { generateMap, hexDistance, isLand, siteScore } from './map';
+import { ERAS, TECHS, availableTechs, computeEra, monthlyResearch } from './tech';
 import { addBio, ageYears, createFounder, personById, surnameOf } from './person';
 import { addEvent } from './events';
 import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles, updateEffort } from './economy';
@@ -19,8 +19,10 @@ import {
 import { cultureMonthly } from './culture';
 import { updateDemand, yearStats } from './stats';
 import { emptyTileHistory, recordTileHistory } from './tiles';
-import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, NOCC, OCC } from './types';
+import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
 import type { Command, Person, World } from './types';
+import { PLAYER, emptyAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName } from './nations';
+import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
 
 /** Typical forager camp size; real local bands are 25–50 people (DESIGN.md §7). */
 export const DEFAULT_BAND_SIZE = 50;
@@ -32,16 +34,16 @@ export interface WorldConfig {
   population?: number;
   /** People per starting band (camp); the tribe starts as several nearby bands. */
   bandSize?: number;
+  /** Number of NPC tribes placed elsewhere on the map (DESIGN.md §12.3). */
+  npcCount?: number;
+  /** Starting population of each NPC tribe. */
+  npcPopulation?: number;
   params?: Partial<Params>;
 }
 
-/** Band-society customs used where the player left a dimension unspecified. */
-const BAND_DEFAULT: Record<string, string> = {
-  allocation: 'sharing', land: 'common', occupation: 'free', distribution: 'need', tax: 'none',
-  authority: 'assembly', succession: 'prestige', inheritance: 'equal', speech: 'free',
-};
-
-const emptyAcc = () => ({ foodProduced: 0, foodDecayed: 0, coldSum: 0, hungerDays: 0, personDays: 0 });
+/** Conservative defaults: every NPC is fully simulated, so total population roughly doubles. */
+export const DEFAULT_NPC_COUNT = 3;
+export const DEFAULT_NPC_POPULATION = 300;
 
 export function bestStartTile(world: World): number {
   let best = -1;
@@ -61,60 +63,65 @@ export function createWorld(cfg: WorldConfig): World {
   const rng = new Rng(seedRng(cfg.seed));
   const culture = cfg.culture ?? UNSPECIFIED;
   const map = generateMap(cfg.seed);
-  const institutions = DIMS.map((d) => optIndex(d.id, culture[d.id] ?? BAND_DEFAULT[d.id]));
   const world: World = {
     version: 1,
     seed: cfg.seed,
     day: 0,
     rng: rng.state,
     params: { ...DEFAULT_PARAMS, ...cfg.params },
-    culture,
     map,
     people: [],
     nextId: 1,
     settlements: [],
-    polity: {
-      leaderId: -1,
-      leaderSince: 0,
-      councilIds: [],
-      capital: 0,
-      treasury: { food: 0, tools: 0, clothes: 0 },
-      legitimacy: 0.6,
-      institutions,
-      active: DIMS.map((d) => d.id !== 'land'),
-      dynasty: 1,
-    },
-    tech: initTech(rng),
-    demand: {},
-    researchAcc: new Array(NOCC).fill(0),
-    monthAcc: emptyAcc(),
-    lastMonth: emptyAcc(),
-    era: 0,
-    stats: [],
-    yearAcc: { births: 0, deaths: 0, starved: 0 },
+    ...newScope(rng, PLAYER, culture),
     events: [],
     eventSeq: 0,
     pending: [],
     commandLog: [],
     notables: [],
     tileHistory: emptyTileHistory(),
+    npcs: [],
+    relations: [],
+    wars: [],
+    warSeq: 0,
   };
 
-  // Bands of a tribe settle around the start tile
   const pop = cfg.population ?? 1000;
+  const bandSize = cfg.bandSize ?? DEFAULT_BAND_SIZE;
   const start = cfg.startTile !== undefined && isLand(map.tiles[cfg.startTile]) ? cfg.startTile : bestStartTile(world);
-  const nBands = Math.max(1, Math.round(pop / (cfg.bandSize ?? DEFAULT_BAND_SIZE)));
+  inPolity(world, PLAYER, (v) => foundTribe(v, rng, start, pop, bandSize));
+
+  // NPC tribes elsewhere on the map, same rules, their own cultures (DESIGN.md §12.3)
+  const home = map.tiles[start];
+  const npcPop = cfg.npcPopulation ?? DEFAULT_NPC_POPULATION;
+  for (let i = 0; i < (cfg.npcCount ?? DEFAULT_NPC_COUNT); i++) {
+    let site = npcSite(world, 9);
+    if (site < 0) site = npcSite(world, 6);
+    if (site < 0) break;
+    const closeness = 1 - (hexDistance(home, map.tiles[site]) - 9) / 30;
+    const id = world.npcs.length + 1;
+    world.npcs.push(newScope(rng, id, npcCulture(rng, culture, closeness)));
+    inPolity(world, id, (v) => foundTribe(v, rng, site, npcPop, bandSize));
+  }
+  initRelations(world);
+  world.rng = rng.state;
+  return world;
+}
+
+/** Bands of a tribe settle around the start tile; runs on the polity's view. */
+function foundTribe(world: World, rng: Rng, start: number, pop: number, bandSize: number): void {
+  const nBands = Math.max(1, Math.round(pop / bandSize));
   const first = newSettlement(world, rng, start);
+  const bands = [first];
   for (let i = 1; i < nBands; i++) {
     let site = -1;
-    for (const s of world.settlements) {
+    for (const s of bands) {
       site = findSite(world, s.tile, 3, 6);
       if (site >= 0) break;
     }
     if (site < 0) break;
-    newSettlement(world, rng, site);
+    bands.push(newSettlement(world, rng, site));
   }
-  const bands = world.settlements;
   if (pop < SMALL_GROUP) {
     foundHouseholds(world, rng, first.id, pop);
   } else {
@@ -126,6 +133,7 @@ export function createWorld(cfg: WorldConfig): World {
   }
   for (const s of bands) s.food = 30 * world.people.filter((p) => p.settlement === s.id).length;
   world.polity.capital = first.id;
+  if (!world.polity.name) world.polity.name = world.polity.id === PLAYER ? `${first.name}部落` : polityName(rng);
 
   addEvent(world, 'misc', false, '部落诞生',
     `${pop} 人分成 ${bands.length} 个群落，在${first.name}一带生活。`);
@@ -141,8 +149,6 @@ export function createWorld(cfg: WorldConfig): World {
     chooseJobs(world, rng, s, groups[s.id], pm, 0);
     updateEffort(world, s, groups[s.id], 0);
   }
-  world.rng = rng.state;
-  return world;
 }
 
 /** Below this size founders are drawn as households, so a handful of people is not all men or all elders. */
@@ -180,6 +186,7 @@ function foundHouseholds(world: World, rng: Rng, settlement: number, pop: number
 
 function formFamilies(world: World, rng: Rng): void {
   for (const s of world.settlements) {
+    if (!s.alive) continue;
     const people = world.people.filter((p) => p.settlement === s.id);
     marriagesAll(world, rng, people);
     const mothers = people.filter((p) => p.sex === 0 && p.spouseId >= 0);
@@ -234,7 +241,9 @@ function applyCommands(world: World, rng: Rng): void {
   if (!due.length) return;
   world.pending = world.pending.filter((c) => c.day > world.day);
   for (const c of due) {
-    if (c.type === 'movement') startMovement(world, rng, c.dim, c.opt, c.strength);
+    // player commands only reach the player's own people
+    if (c.type === 'movement') inPolity(world, PLAYER, (v) => startMovement(v, rng, c.dim, c.opt, c.strength));
+    else if (c.type === 'warMood') pushWarMood(world, PLAYER, c.value);
     else if (c.type === 'params') world.params = { ...world.params, ...c.params };
     world.commandLog.push(c);
   }
@@ -244,27 +253,41 @@ function applyCommands(world: World, rng: Rng): void {
 export function step(world: World): void {
   const rng = new Rng(world.rng);
   applyCommands(world, rng);
-  const groups = groupBySettlement(world);
+  forEachPolity(world, (v) => daily(v, rng));
+  regenTiles(world);
 
+  world.day++;
+  if (world.day % DAYS_PER_MONTH === 0) {
+    forEachPolity(world, (v) => monthly(v, rng, groupBySettlement(v)));
+    warMonthly(world, rng);
+  }
+  if (world.day % DAYS_PER_YEAR === 0) {
+    forEachPolity(world, (v) => yearly(v, rng));
+    diplomacyYearly(world, rng);
+    recordTileHistory(world); // the map is shared by all polities
+    if (!world.people.length) addEvent(world, 'misc', true, '文明消亡', '最后一个人也死去了。');
+  }
+  world.rng = rng.state;
+}
+
+/** One polity's daily production, consumption, births and deaths; runs on its view. */
+function daily(world: World, rng: Rng): void {
+  const groups = groupBySettlement(world);
   for (const s of world.settlements) {
     if (s.alive && groups[s.id].length) dailySettlement(world, rng, s, groups[s.id]);
   }
   const leaderBefore = personById(world, world.polity.leaderId);
   const dead = dailyDemography(world, rng, groups);
+  if (!world.people.length) return;
   if (leaderBefore && dead.some((d) => d.person.id === leaderBefore.id)) ensureLeader(world, rng, leaderBefore);
   else if (!personById(world, world.polity.leaderId)) ensureLeader(world, rng);
-  regenTiles(world);
-
-  world.day++;
-  if (world.day % DAYS_PER_MONTH === 0) monthly(world, rng, groups);
-  if (world.day % DAYS_PER_YEAR === 0) yearly(world, rng);
-  world.rng = rng.state;
 }
 
 function monthly(world: World, rng: Rng, groups: Person[][]): void {
   world.lastMonth = world.monthAcc;
   world.monthAcc = emptyAcc();
   updateDemand(world, groups);
+  world.demand.war = warDemand(world);
 
   const available = availableTechs(world);
   monthlyResearch(world, available);
@@ -347,11 +370,9 @@ function yearly(world: World, rng: Rng): void {
   chooseCouncil(world);
   const st = yearStats(world);
   world.stats.push(st);
-  recordTileHistory(world);
   if (st.pop > 0 && st.starved / st.pop > 0.05) {
     addEvent(world, 'famine', true, '大饥荒', `过去一年有 ${st.starved} 人死于饥寒，占人口 ${((st.starved / st.pop) * 100).toFixed(1)}%。`);
   }
-  if (st.pop === 0) addEvent(world, 'misc', true, '文明消亡', '最后一个人也死去了。');
   world.yearAcc = { births: 0, deaths: 0, starved: 0 };
 }
 
@@ -366,9 +387,26 @@ export function serialize(world: World): string {
 }
 
 export function deserialize(json: string): World {
-  const world = JSON.parse(json) as World;
-  world.tileHistory ??= emptyTileHistory(); // saves from before tile history
-  return world;
+  const w = JSON.parse(json) as World;
+  // saves from before multiple polities
+  if (!w.npcs) {
+    Object.assign(w.polity, { id: PLAYER, name: '部落', hue: polityHue(PLAYER), alive: true, warMood: 0 });
+    for (const s of w.settlements) Object.assign(s, { polity: PLAYER, origin: PLAYER, conquered: -1 });
+    Object.assign(w, { npcs: [], relations: [], wars: [], warSeq: 0 });
+  }
+  // techs added after the save was made
+  for (const sc of [w, ...w.npcs]) {
+    const t = sc.tech;
+    for (let i = t.known.length; i < TECHS.length; i++) {
+      t.known.push(false);
+      t.progress.push(0);
+      t.threshold.push(1);
+      t.day.push(-1);
+      t.inventor.push(-1);
+    }
+  }
+  w.tileHistory ??= emptyTileHistory(); // saves from before tile history
+  return w;
 }
 
 /** FNV-1a over the serialized state, for desync detection and regression tests. */

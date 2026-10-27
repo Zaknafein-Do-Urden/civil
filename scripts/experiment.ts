@@ -6,6 +6,7 @@ import { PRESETS, DIMS, optName } from '../src/core/rules';
 import { createWorld, runDays } from '../src/core/sim';
 import { ERAS, TECHS } from '../src/core/tech';
 import { OCC_NAMES } from '../src/core/types';
+import { allPolities, peopleOf } from '../src/core/nations';
 
 function arg(name: string, def: string): string {
   const i = process.argv.indexOf(`--${name}`);
@@ -41,6 +42,9 @@ for (const id of presets) {
   console.log(`  科技 ${known.join('、') || '无'}`);
   console.log(`  制度 ${DIMS.map((d, i) => `${d.name}:${optName(d.id, world.polity.institutions[i])}`).join(' ')}`);
   const major = world.events.filter((e) => e.major);
+  const ended = world.wars.filter((x) => x.end >= 0).length;
+  const conquests = world.events.filter((e) => e.title.startsWith('征服')).length;
+  console.log(`  各政体 ${allPolities(world).map((p) => `${p.name}${p.alive ? '' : '†'}${peopleOf(world, p.id).length}`).join(' ')}；战争 ${world.warSeq} 场（已结束 ${ended}），征服 ${conquests} 次`);
   console.log(`  大事件 ${major.length} 件：${major.slice(-8).map((e) => `[${Math.floor(e.day / 360) + 1}年]${e.title}`).join('；')}`);
 }
 

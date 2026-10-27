@@ -2,7 +2,9 @@ import { DIMS, PRESETS, UNSPECIFIED } from '../core/rules';
 import type { CultureSetting, DimId } from '../core/rules';
 import { TERRAIN_NAMES, generateMap, isLand, siteScore, tilesWithin } from '../core/map';
 import './wikiView';
-import { DEFAULT_BAND_SIZE, createWorld, deserialize, serialize, step } from '../core/sim';
+import { DEFAULT_BAND_SIZE, DEFAULT_NPC_COUNT, DEFAULT_NPC_POPULATION, createWorld, deserialize, serialize, step } from '../core/sim';
+import { PLAYER, peopleOf } from '../core/nations';
+import { focusBanner } from './diplomacy';
 import { ERAS } from '../core/tech';
 import { formatDate } from '../core/events';
 import { personById } from '../core/person';
@@ -99,6 +101,15 @@ function readPopulation(): number {
   return Math.max(5, Math.min(3000, Math.round(+($('#population') as HTMLInputElement).value) || 1000));
 }
 
+function readNpcs(): { npcCount: number; npcPopulation: number } {
+  const n = +($('#npc-count') as HTMLInputElement).value;
+  const pop = +($('#npc-pop') as HTMLInputElement).value;
+  return {
+    npcCount: Math.max(0, Math.min(8, Number.isFinite(n) && ($('#npc-count') as HTMLInputElement).value !== '' ? n : DEFAULT_NPC_COUNT)),
+    npcPopulation: Math.max(50, Math.min(1500, pop || DEFAULT_NPC_POPULATION)),
+  };
+}
+
 function readBandSize(): number {
   return Math.max(20, Math.min(500, +($('#band-size') as HTMLInputElement).value || DEFAULT_BAND_SIZE));
 }
@@ -124,7 +135,7 @@ $('#reroll').onclick = () => {
 $('#best-site').onclick = pickBestSite;
 $('#start').onclick = () => {
   const seed = ($('#seed') as HTMLInputElement).value.trim() || randomSeed();
-  startGame(createWorld({ seed, culture: readCulture(), startTile, population: readPopulation(), bandSize: readBandSize() }));
+  startGame(createWorld({ seed, culture: readCulture(), startTile, population: readPopulation(), bandSize: readBandSize(), ...readNpcs() }));
 };
 $('#load-local').onclick = () => {
   try {
@@ -190,6 +201,7 @@ function startGame(world: World): void {
     settlementId: -1,
     tileId: -1,
     majorOnly: false,
+    focus: PLAYER,
     select(kind, id) {
       if (kind === 'person') {
         ui.personId = id;
@@ -262,12 +274,15 @@ function refresh(force = false): void {
   const l = personById(w, w.polity.leaderId);
   $('#tb-date').textContent = formatDate(w.day);
   $('#tb-era').textContent = ERAS[w.era];
-  $('#tb-summary').innerHTML = `人口 ${w.people.length} · 首领 ${l ? esc(l.name) : '—'} · 合法性 ${pct(w.polity.legitimacy)}`;
+  $('#tb-summary').innerHTML = `${esc(w.polity.name)} · 人口 ${peopleOf(w, PLAYER).length} · 首领 ${l ? esc(l.name) : '—'} · 合法性 ${pct(w.polity.legitimacy)}`;
   $('#tb-rate').textContent = g.running ? `实际 ${g.rate.toFixed(0)} 天/秒` : '';
   const now = performance.now();
   if (force || now - g.lastPanel > 400) {
     g.lastPanel = now;
     g.view.draw(w);
+    const banner = focusBanner(g.ui);
+    $('#focus-banner').innerHTML = banner;
+    $('#focus-banner').classList.toggle('hidden', !banner);
     const tab = TABS.find((t) => t.id === g.ui.tab)!;
     const body = $('#tab-body');
     const top = body.scrollTop;
@@ -377,6 +392,7 @@ document.addEventListener('keydown', (e) => {
 document.addEventListener('click', (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>('[data-person],[data-settlement],[data-tile],[data-tab],[data-speed],[data-overlay]');
   if (!el || !game) return;
+  if (el.dataset.unfocus) game.ui.focus = PLAYER;
   if (el.dataset.person !== undefined) {
     if ($('#modal').contains(el)) {
       game.modalQueue = [];

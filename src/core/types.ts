@@ -152,9 +152,23 @@ export interface Settlement {
   practiced: number[];
   pop: number;
   stressMonths: number;
+  /** Polity this settlement currently belongs to (0 = the player). */
+  polity: number;
+  /** Polity that founded it; differs from `polity` while a conquered settlement is not yet assimilated. */
+  origin: number;
+  /** Day it was last conquered, or -1. */
+  conquered: number;
 }
 
 export interface Polity {
+  /** 0 = the player's polity; NPCs are 1, 2, ... */
+  id: number;
+  name: string;
+  /** Map colour hue, 0..360. */
+  hue: number;
+  alive: boolean;
+  /** War/peace current pushed by events and the player, -1 (pacifist) .. 1 (hawkish); decays yearly. */
+  warMood: number;
   leaderId: number;
   leaderSince: number;
   councilIds: number[];
@@ -187,6 +201,8 @@ export type EventKind =
   | 'famine'
   | 'settlement'
   | 'movement'
+  | 'war'
+  | 'diplomacy'
   | 'misc';
 
 export interface GameEvent {
@@ -198,6 +214,8 @@ export interface GameEvent {
   text: string;
   people: number[];
   settlement: number;
+  /** Polity whose internal affairs this is about (-1 or absent: the player's / international). */
+  polity?: number;
 }
 
 export interface YearStats {
@@ -222,7 +240,8 @@ export interface YearStats {
 
 export type Command =
   | { day: number; type: 'movement'; dim: number; opt: number; strength: number }
-  | { day: number; type: 'params'; params: Partial<Params> };
+  | { day: number; type: 'params'; params: Partial<Params> }
+  | { day: number; type: 'warMood'; value: number };
 
 export interface NotableRecord {
   id: number;
@@ -230,6 +249,70 @@ export interface NotableRecord {
   birth: number;
   death: number;
   bio: { day: number; text: string }[];
+}
+
+/** Per-polity simulation state. The player's lives on World's top-level fields, NPCs' in `World.npcs`. */
+export interface PolityScope {
+  polity: Polity;
+  culture: CultureSetting;
+  tech: TechState;
+  demand: Record<string, number>;
+  researchAcc: number[];
+  monthAcc: MonthAcc;
+  lastMonth: MonthAcc;
+  era: number;
+  stats: YearStats[];
+  yearAcc: { births: number; deaths: number; starved: number };
+}
+
+export interface MonthAcc {
+  foodProduced: number;
+  foodDecayed: number;
+  coldSum: number;
+  hungerDays: number;
+  personDays: number;
+}
+
+export type RelationStatus = 'none' | 'contact' | 'peace' | 'alliance' | 'tribute' | 'war';
+
+/** Relations between polities a < b. */
+export interface Relation {
+  a: number;
+  b: number;
+  status: RelationStatus;
+  since: number;
+  /** -1..1 */
+  opinion: number;
+  /** Accumulated trade and intermarriage, 0..1. */
+  ties: number;
+  /** Last computed border friction, 0..1 (for display). */
+  friction: number;
+  /** Grudge of a against b, and of b against a. */
+  grudgeA: number;
+  grudgeB: number;
+  /** While status is 'tribute': the polity that pays. */
+  tributary: number;
+  /** No war is declared before this day without strong cause. */
+  truceUntil: number;
+}
+
+export interface War {
+  id: number;
+  attacker: number;
+  defender: number;
+  start: number;
+  /** Main motive of the attacker. */
+  goal: 'raid' | 'land' | 'revenge' | 'independence' | 'ally';
+  deaths: [number, number];
+  loot: [number, number];
+  conquests: [number, number];
+  /** Monthly actions so far. */
+  actions: number;
+  /** Day of the last conquest in this war. */
+  lastConquest: number;
+  /** Day the war ended, or -1 while ongoing. */
+  end: number;
+  outcome: string;
 }
 
 export interface World {
@@ -250,9 +333,9 @@ export interface World {
   /** Research effort accumulated this month per occupation (learning by doing, tinkering). */
   researchAcc: number[];
   /** Monthly accumulators feeding demand signals and diagnostics. */
-  monthAcc: { foodProduced: number; foodDecayed: number; coldSum: number; hungerDays: number; personDays: number };
+  monthAcc: MonthAcc;
   /** Last month's values of monthAcc, for display and diagnostics. */
-  lastMonth: { foodProduced: number; foodDecayed: number; coldSum: number; hungerDays: number; personDays: number };
+  lastMonth: MonthAcc;
   era: number;
   stats: YearStats[];
   yearAcc: { births: number; deaths: number; starved: number };
@@ -263,4 +346,9 @@ export interface World {
   notables: NotableRecord[];
   /** Yearly per-tile resource/ownership snapshots, last 100 years (tiles.ts). */
   tileHistory: TileHistory;
+  /** NPC polities' state; polity id i lives at npcs[i - 1]. */
+  npcs: PolityScope[];
+  relations: Relation[];
+  wars: War[];
+  warSeq: number;
 }

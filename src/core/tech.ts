@@ -5,10 +5,10 @@ import { OCC, NOCC } from './types';
 import type { World } from './types';
 import type { Rng } from './rng';
 
-export type Domain = 'food' | 'hunt' | 'warmth' | 'tools' | 'storage' | 'admin' | 'transport';
+export type Domain = 'food' | 'hunt' | 'warmth' | 'tools' | 'storage' | 'admin' | 'transport' | 'war';
 
 export const DOMAIN_NAMES: Record<Domain, string> = {
-  food: '食物', hunt: '狩猎', warmth: '保暖', tools: '工具', storage: '储存', admin: '管理', transport: '交通',
+  food: '食物', hunt: '狩猎', warmth: '保暖', tools: '工具', storage: '储存', admin: '管理', transport: '交通', war: '军事',
 };
 
 export type EnvKey = 'grain' | 'animals' | 'clay' | 'copper' | 'tin' | 'river' | 'coast' | 'water';
@@ -51,6 +51,10 @@ export const TECHS: TechDef[] = [
   { id: 'writing', name: '文字', desc: '管理半径翻倍，研究 +30%', cost: 15000, prereq: ['tally', 'agriculture'], domain: 'admin', occs: [OCC.admin, OCC.tinker], env: [] },
   { id: 'bronze', name: '青铜', desc: '工具加成再 +50%，耐用度 +50%', cost: 18000, prereq: ['copper'], domain: 'tools', occs: [OCC.tool], env: ['tin'] },
   { id: 'sailing', name: '帆船', desc: '可沿海航行', cost: 14000, prereq: ['boats', 'weaving'], domain: 'transport', occs: [OCC.fish, OCC.tinker], env: ['coast'] },
+  // Military techs (DESIGN.md §12.6): demand comes from war and threatening neighbours.
+  { id: 'palisade', name: '木栅寨墙', desc: '聚落防守战斗力 +50%', cost: 5000, prereq: ['agriculture'], domain: 'war', occs: [OCC.tool, OCC.farm], env: [] },
+  { id: 'bronze_weapons', name: '青铜兵器', desc: '战斗力 +40%', cost: 9000, prereq: ['bronze'], domain: 'war', occs: [OCC.tool, OCC.hunt], env: [] },
+  { id: 'chariot', name: '战车', desc: '进攻 +30%，出征半径 +50%', cost: 11000, prereq: ['wheel', 'husbandry'], domain: 'war', occs: [OCC.herd, OCC.tool], env: [] },
 ];
 
 export const TECH_INDEX: Record<string, number> = Object.fromEntries(TECHS.map((t, i) => [t.id, i]));
