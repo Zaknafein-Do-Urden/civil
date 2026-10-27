@@ -4,6 +4,7 @@ import { PRESETS } from '../src/core/rules';
 import { exp, ln, pow } from '../src/core/dmath';
 import { Rng, seedRng } from '../src/core/rng';
 import { DAYS_PER_YEAR } from '../src/core/types';
+import { TILE_HISTORY_YEARS, decodeTileSnapshot, recordTileHistory } from '../src/core/tiles';
 
 const preset = (id: string) => PRESETS.find((p) => p.id === id)!.culture;
 
@@ -69,5 +70,23 @@ describe('simulation', () => {
     expect(w.people.length).toBeGreaterThan(600);
     expect(w.stats.length).toBe(10);
     expect(w.polity.leaderId).toBeGreaterThan(0);
+  });
+});
+
+describe('tile history', () => {
+  it('records yearly, round-trips through save and keeps only 100 years', () => {
+    const w = createWorld({ seed: 'tiles', culture: preset('primitive') });
+    runDays(w, 2 * DAYS_PER_YEAR);
+    expect(w.tileHistory.days).toEqual([DAYS_PER_YEAR, 2 * DAYS_PER_YEAR]);
+    const snap = decodeTileSnapshot(w.map, w.tileHistory.data[1]);
+    for (const t of w.map.tiles) {
+      if (t.plantsCap > 0) expect(Math.abs(snap.plants[t.id] - t.plants / t.plantsCap)).toBeLessThan(0.003);
+      if (t.maxPlots > 0) expect(Math.abs(snap.plots[t.id] - t.plots)).toBeLessThan(0.13);
+      if (t.terrain !== 'ocean' && t.terrain !== 'lake') expect(snap.owner[t.id]).toBe(t.owner);
+    }
+    const b = deserialize(serialize(w));
+    expect(b.tileHistory).toEqual(w.tileHistory);
+    for (let i = 0; i < 105; i++) recordTileHistory(w);
+    expect(w.tileHistory.days.length).toBe(TILE_HISTORY_YEARS);
   });
 });

@@ -10,21 +10,27 @@ import { foodNeed, wealth } from '../core/economy';
 import { diagnose } from '../core/stats';
 import { popularSupport, weightedSupport } from '../core/politics';
 import { formatDate } from '../core/events';
-import { TERRAIN_NAMES } from '../core/map';
+import { TERRAIN_NAMES, isLand, travelCosts } from '../core/map';
 import { issue } from '../core/sim';
-import { NOCC, OCC, OCC_COLORS, OCC_NAMES } from '../core/types';
+import { decodeTileSnapshot, tileCapacity } from '../core/tiles';
+import type { TileSnapshot } from '../core/tiles';
+import { has } from '../core/tech';
+import { season } from '../core/dmath';
+import { DAYS_PER_YEAR, NOCC, OCC, OCC_COLORS, OCC_NAMES } from '../core/types';
 import type { Person, World } from '../core/types';
 import { bar, esc, mini, pct } from './dom';
 import { drawChart } from './chart';
-import { settlementColor } from './mapView';
+import type { Series } from './chart';
+import { settlementColor, stockRatio } from './mapView';
 
 export interface Ui {
   world: World;
   tab: string;
   personId: number;
   settlementId: number;
+  tileId: number;
   majorOnly: boolean;
-  select(kind: 'person' | 'settlement', id: number): void;
+  select(kind: 'person' | 'settlement' | 'tile', id: number): void;
   toast(msg: string): void;
 }
 
@@ -236,6 +242,148 @@ const settlement: Tab = {
   },
 };
 
+// --- tile ----------------------------------------------------------------
+
+const SEASON_NAMES = ['冬', '冬', '春', '春', '春', '夏', '夏', '夏', '秋', '秋', '秋', '冬'];
+
+const snapCache = new Map<string, TileSnapshot>();
+function snapshot(w: World, data: string): TileSnapshot {
+  let s = snapCache.get(data);
+  if (!s) {
+    if (snapCache.size > 150) snapCache.clear();
+    s = decodeTileSnapshot(w.map, data);
+    snapCache.set(data, s);
+  }
+  return s;
+}
+
+let travelCache: { key: string; costs: number[] } | undefined;
+function capitalCosts(w: World): number[] | undefined {
+  const cap = w.settlements[w.polity.capital];
+  if (!cap?.alive) return undefined;
+  const tech = { boats: has(w, 'boats'), wheel: has(w, 'wheel'), sailing: has(w, 'sailing') };
+  const key = `${w.seed}|${cap.tile}|${tech.boats}${tech.wheel}${tech.sailing}`;
+  if (travelCache?.key !== key) travelCache = { key, costs: travelCosts(w.map, w.map.tiles[cap.tile], tech) };
+  return travelCache.costs;
+}
+
+function delta(now: number, before: number | undefined): string {
+  if (before === undefined || Number.isNaN(before)) return '';
+  const d = now - before;
+  if (Math.abs(d) < 0.005) return '<span class="tile-delta muted">持平</span>';
+  return `<span class="tile-delta ${d > 0 ? 'up' : 'down'}">${d > 0 ? '+' : ''}${(d * 100).toFixed(0)}%</span>`;
+}
+
+const yesNo = (v: boolean) => (v ? '有' : '<span class="muted">无</span>');
+
+const tileTab: Tab = {
+  id: 'tile',
+  name: '地块',
+  mount(el) {
+    el.innerHTML = `<div id="tl-info"></div>
+      <div id="tl-hist"><h4>资源历史（近 100 年，每年末记录一次）</h4><canvas class="chart" id="ch-tile"></canvas><div id="tl-owners" class="small"></div></div>`;
+  },
+  update(el, ui) {
+    const w = ui.world;
+    const t = w.map.tiles[ui.tileId];
+    const info = el.querySelector('#tl-info')!;
+    const hist = el.querySelector('#tl-hist') as HTMLElement;
+    if (!t) {
+      info.innerHTML = '<p class="muted">在地图上点击任何地块（聚落中心除外）查看它的环境、资源和历史。</p>';
+      hist.style.display = 'none';
+      return;
+    }
+    const h = w.tileHistory;
+    // reference snapshot: the last year-end strictly before today ("较上年末")
+    let ref = -1;
+    for (let i = h.days.length - 1; i >= 0; i--) {
+      if (h.days[i] < w.day) {
+        ref = i;
+        break;
+      }
+    }
+    const prev = ref >= 0 ? snapshot(w, h.data[ref]) : undefined;
+    const seasonal = t.temp + 12 * season(w.day % DAYS_PER_YEAR);
+    const month = Math.floor((w.day % DAYS_PER_YEAR) / 30);
+    const water = !isLand(t);
+    const head = `<div class="person-head"><h3>${TERRAIN_NAMES[t.terrain]} <span class="muted small">（${t.col}, ${t.row}）</span></h3><a class="link" data-tile="-1">关闭</a></div>
+      <div class="muted small">海拔 ${water ? '—' : (t.elev * 3000).toFixed(0) + ' 米'} · 年均 ${t.temp.toFixed(1)}°C · 当前（${SEASON_NAMES[month]}）${seasonal.toFixed(1)}°C · 降水 ${pct(t.rain)}${t.river ? ' · 河流' : ''}${t.coast ? ' · 海岸' : ''}</div>`;
+    if (t.terrain === 'ocean') {
+      info.innerHTML = `${head}<p class="muted small">海洋本身不记资源：沿海渔获计在相邻的海岸陆地格上。</p>`;
+      hist.style.display = 'none';
+      return;
+    }
+
+    const res = (name: string, key: 'plants' | 'game' | 'fish', color: string) => {
+      const cap = t[(key + 'Cap') as 'plantsCap' | 'gameCap' | 'fishCap'];
+      if (cap <= 0) return '';
+      const r = t[key] / cap;
+      return `<tr><td>${name}</td><td>${mini(r, color)}</td><td class="small">${t[key].toFixed(0)} / ${cap.toFixed(0)}</td><td>${delta(r, prev?.[key][t.id])}</td></tr>`;
+    };
+    const resRows = res('野生植物', 'plants', '#7cb342') + res('猎物', 'game', '#c0632b') + res('鱼', 'fish', '#2e86c1');
+    const plotsRow = t.maxPlots > 0
+      ? `<tr><td>耕地</td><td>${mini(t.plots / t.maxPlots, '#f9a825')}</td><td class="small">${t.plots.toFixed(1)} / ${t.maxPlots} 块</td><td>${prev ? delta(t.plots / t.maxPlots, prev.plots[t.id] / t.maxPlots) : ''}</td></tr>`
+      : '';
+    const wildShare = t.maxPlots > 0 ? 1 - (t.plots / t.maxPlots) * 0.7 : 1;
+
+    const owner = t.owner >= 0 ? w.settlements[t.owner] : undefined;
+    const costs = capitalCosts(w);
+    const dist = costs?.[t.id];
+    const cap = water ? undefined : tileCapacity(w, t);
+    const ratio = stockRatio(t);
+
+    info.innerHTML = `${head}
+      <div class="kpis" style="margin-top:6px">
+        <div class="kpi"><div class="k">资源存量</div><div class="v">${Number.isNaN(ratio) ? '—' : pct(ratio)}</div></div>
+        <div class="kpi"><div class="k">归属</div><div class="v">${owner ? settlementLink(w, owner.id) : '<span class="muted">无主</span>'}</div></div>
+        <div class="kpi"><div class="k">可持续承载</div><div class="v">${cap ? cap.people.toFixed(1) + ' 人' : '—'}</div></div>
+      </div>
+      <h4>野生资源${prev ? ' <span class="muted small">（右列：较上年末）</span>' : ''}</h4>
+      ${resRows || plotsRow ? `<table class="list">${resRows}${plotsRow}</table>` : '<p class="muted small">这里几乎不产出任何东西。</p>'}
+      ${wildShare < 1 ? `<div class="muted small">农田挤占了野生动植物：当前上限只有原始的 ${pct(wildShare)}。</div>` : ''}
+      ${water ? '' : `<h4>土地与矿产</h4>
+      <div class="grid2 small">
+        <div>肥力：<b>${pct(t.fertility)}</b></div><div>可开垦：<b>${t.maxPlots}</b> 块</div>
+        <div>石料：<b>${t.stone >= 1 ? '丰富' : t.stone >= 0.5 ? '一般' : '稀少'}</b></div><div>黏土：${yesNo(t.clay)}</div>
+        <div>铜矿：${yesNo(t.copper)}</div><div>锡矿：${yesNo(t.tin)}</div>
+        <div>野生谷物：${yesNo(t.grain)}</div><div>可驯化动物：${yesNo(t.animals)}</div>
+      </div>`}
+      <h4>人与政治</h4>
+      <div class="small">所属聚落：${owner ? `${settlementLink(w, owner.id)}（${owner.pop} 人，领地 ${owner.territory.length} 格）` : '<span class="muted">无主之地</span>'}</div>
+      <div class="small">到首都通行距离：${dist === undefined ? '—' : Number.isFinite(dist) ? dist.toFixed(1) : '<span class="muted">无法到达</span>'}</div>
+      <div class="small">执行力：${owner?.alive ? pct(owner.enforcement) : '<span class="muted">无人居住，不受管辖</span>'}</div>
+      ${cap ? `<h4>承载力估算（按当前科技）</h4>
+      <div class="small">野生资源最大可持续产量 ≈ <b>${cap.wild.toFixed(1)}</b> 食物/天${has(w, 'fishing') || t.fishCap <= 0 ? '' : '（尚不会捕鱼，鱼未计入）'}</div>
+      ${cap.agriculture && t.maxPlots > 0 ? `<div class="small">全部开垦耕作 ≈ <b>${cap.farmed.toFixed(1)}</b> 食物/天（含剩余的野生资源）</div>` : ''}
+      <div class="small">可持续养活约 <b>${cap.people.toFixed(1)}</b> 人。<span class="muted">这是理论上限：未计劳力、工具与努力；资源被吃到上限的约 80% 以下，采集效率就开始下降。</span></div>` : ''}`;
+
+    // history
+    hist.style.display = '';
+    const snaps = h.data.map((d) => snapshot(w, d));
+    const xs = h.days.map((d) => d / DAYS_PER_YEAR);
+    const series: Series[] = [];
+    if (t.plantsCap > 0) series.push({ name: '植物', color: '#7cb342', values: snaps.map((x) => x.plants[t.id]) });
+    if (t.gameCap > 0) series.push({ name: '猎物', color: '#c0632b', values: snaps.map((x) => x.game[t.id]) });
+    if (t.fishCap > 0) series.push({ name: '鱼', color: '#4fb3ff', values: snaps.map((x) => x.fish[t.id]) });
+    if (t.maxPlots > 0) series.push({ name: '耕地占比', color: '#f9a825', values: snaps.map((x) => x.plots[t.id] / t.maxPlots) });
+    const canvas = el.querySelector('#ch-tile') as HTMLCanvasElement;
+    canvas.style.display = snaps.length && series.length ? '' : 'none';
+    if (snaps.length && series.length) drawChart(canvas, xs, series, { min: 0, max: 1 });
+    const changes: string[] = [];
+    let last: number | undefined;
+    snaps.forEach((x, i) => {
+      const o = x.owner[t.id];
+      if (o === last) return;
+      const name = o >= 0 ? settlementLink(w, o) : '<span class="muted">无主</span>';
+      changes.push(`<div><span class="muted">第${h.days[i] / DAYS_PER_YEAR}年末</span> ${last === undefined ? '' : '变为 '}${name}</div>`);
+      last = o;
+    });
+    el.querySelector('#tl-owners')!.innerHTML = snaps.length
+      ? `<h4>归属变迁</h4>${changes.join('')}`
+      : '<p class="muted small">还没有记录：每年年末记录一次。</p>';
+  },
+};
+
 // --- people --------------------------------------------------------------
 
 const people: Tab = {
@@ -403,4 +551,4 @@ function fmt(v: number): string {
   return Math.abs(v) < 0.01 && v !== 0 ? v.toExponential(1) : String(+v.toFixed(4));
 }
 
-export const TABS: Tab[] = [overview, institutions, settlement, people, tech, events, diagnosis, params];
+export const TABS: Tab[] = [overview, institutions, settlement, tileTab, people, tech, events, diagnosis, params];

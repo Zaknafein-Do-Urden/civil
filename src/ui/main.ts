@@ -7,7 +7,7 @@ import { ERAS } from '../core/tech';
 import { formatDate } from '../core/events';
 import { personById } from '../core/person';
 import type { GameEvent, Tile, World, WorldMap } from '../core/types';
-import { MapView } from './mapView';
+import { MapView, legendHtml } from './mapView';
 import type { Overlay } from './mapView';
 import { $, download, esc, pct } from './dom';
 import { TABS } from './panels';
@@ -188,14 +188,25 @@ function startGame(world: World): void {
     tab: 'overview',
     personId: -1,
     settlementId: -1,
+    tileId: -1,
     majorOnly: false,
     select(kind, id) {
       if (kind === 'person') {
         ui.personId = id;
         switchTab('people');
+      } else if (kind === 'tile') {
+        ui.tileId = id;
+        if (game) {
+          game.view.selectedTile = id;
+          game.view.selectedSettlement = id >= 0 ? world.map.tiles[id].owner : -1;
+        }
+        switchTab('tile');
       } else {
         ui.settlementId = id;
-        if (game) game.view.selectedSettlement = id;
+        if (game) {
+          game.view.selectedSettlement = id;
+          game.view.selectedTile = -1;
+        }
         switchTab('settlement');
       }
       refresh(true);
@@ -203,10 +214,14 @@ function startGame(world: World): void {
     toast,
   };
   const view = new MapView($('#map') as HTMLCanvasElement, (t) => {
-    const s = world.settlements.find((x) => x.alive && (x.tile === t.id || x.territory.includes(t.id)));
+    // a settlement's centre opens the settlement; every other tile opens the tile panel
+    const s = world.settlements.find((x) => x.alive && x.tile === t.id);
     if (s) ui.select('settlement', s.id);
+    else ui.select('tile', t.id);
   });
   view.setMap(world.map);
+  $('#map-legend').innerHTML = legendHtml(view.overlay);
+  document.querySelectorAll<HTMLButtonElement>('#map-tools button').forEach((b) => b.classList.toggle('on', b.dataset.overlay === view.overlay));
   game = {
     ui, view, running: false, speed: 1, fastForward: false, acc: 0,
     lastSeq: world.eventSeq, lastPanel: 0, daysThisSecond: 0, rateStamp: performance.now(), rate: 0, modalQueue: [],
@@ -360,7 +375,7 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-person],[data-settlement],[data-tab],[data-speed],[data-overlay]');
+  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-person],[data-settlement],[data-tile],[data-tab],[data-speed],[data-overlay]');
   if (!el || !game) return;
   if (el.dataset.person !== undefined) {
     if ($('#modal').contains(el)) {
@@ -369,6 +384,7 @@ document.addEventListener('click', (e) => {
     }
     game.ui.select('person', +el.dataset.person);
   } else if (el.dataset.settlement !== undefined) game.ui.select('settlement', +el.dataset.settlement);
+  else if (el.dataset.tile !== undefined) game.ui.select('tile', +el.dataset.tile);
   else if (el.dataset.tab) {
     switchTab(el.dataset.tab);
     refresh(true);
@@ -377,6 +393,7 @@ document.addEventListener('click', (e) => {
     setRunning(true);
   } else if (el.dataset.overlay) {
     game.view.overlay = el.dataset.overlay as Overlay;
+    $('#map-legend').innerHTML = legendHtml(game.view.overlay);
     document.querySelectorAll<HTMLButtonElement>('#map-tools button').forEach((b) => b.classList.toggle('on', b === el));
     refresh(true);
   }

@@ -18,6 +18,7 @@ import {
 } from './politics';
 import { cultureMonthly } from './culture';
 import { updateDemand, yearStats } from './stats';
+import { emptyTileHistory, recordTileHistory } from './tiles';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, NOCC, OCC } from './types';
 import type { Command, Person, World } from './types';
 
@@ -96,6 +97,7 @@ export function createWorld(cfg: WorldConfig): World {
     pending: [],
     commandLog: [],
     notables: [],
+    tileHistory: emptyTileHistory(),
   };
 
   // Bands of a tribe settle around the start tile
@@ -345,6 +347,7 @@ function yearly(world: World, rng: Rng): void {
   chooseCouncil(world);
   const st = yearStats(world);
   world.stats.push(st);
+  recordTileHistory(world);
   if (st.pop > 0 && st.starved / st.pop > 0.05) {
     addEvent(world, 'famine', true, '大饥荒', `过去一年有 ${st.starved} 人死于饥寒，占人口 ${((st.starved / st.pop) * 100).toFixed(1)}%。`);
   }
@@ -363,7 +366,9 @@ export function serialize(world: World): string {
 }
 
 export function deserialize(json: string): World {
-  return JSON.parse(json) as World;
+  const world = JSON.parse(json) as World;
+  world.tileHistory ??= emptyTileHistory(); // saves from before tile history
+  return world;
 }
 
 /** FNV-1a over the serialized state, for desync detection and regression tests. */
