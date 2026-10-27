@@ -20,6 +20,14 @@ interface Ctx {
   farmer: number;
   mismatch: number;
   age: number;
+  noble: number;
+  /** Share of adults who are noble. */
+  nobleShare: number;
+  /** Not of the leader's people. */
+  minority: number;
+  /** In the leader's faction, or in another faction. */
+  ruling: number;
+  opposition: number;
 }
 
 /** Self-interest score per option, centred so the mean across options is zero. */
@@ -87,11 +95,31 @@ function interest(world: World, p: Person, d: number, c: Ctx): number[] {
         0.5 * c.poor - 0.3 * (c.relW - 1),
       ];
       break;
-    default: // speech
+    case D.speech:
       s = [
         0.6 * p.grievance + 0.3 * a(p.math) + 0.1,
         0,
         0.8 * c.isLeader * (1 - L) + 0.4 * c.elite - 0.2,
+      ];
+      break;
+    case D.suffrage: {
+      // everyone wants a franchise that includes them and leaves out rivals
+      const rich = c.relW >= 1 ? 1 : 0;
+      s = [
+        0.3 * (1 - p.sex) + 0.3 * c.poor + 0.4 * c.minority + 0.2 * (1 - c.top),
+        0.3 * p.sex * (1 - c.minority) - 0.3 * (1 - p.sex) + 0.1 * p.conformity,
+        0.6 * rich + 0.3 * Math.min(1, p.plots) - 0.5 * c.poor,
+        0.4 * (1 - c.minority) - 0.9 * c.minority,
+        // a noble franchise is only worth having while nobles are few
+        (1.0 * c.noble + 0.4 * c.elite) * (1 - c.nobleShare) - 0.4,
+      ];
+      break;
+    }
+    default: // checks
+      s = [
+        1.5 * c.isLeader + 0.5 * c.leaderKin + 0.3 * c.ruling - 0.1,
+        0.8 * (p.role === 'council' ? 1 : 0) + 0.3 * c.top + 0.2 * c.noble + 0.2 * c.opposition,
+        0.4 * (1 - c.top) + 0.4 * p.grievance + 0.3 * c.opposition + 0.2 * p.integrity - 0.8 * c.isLeader,
       ];
   }
   let m = 0;
@@ -111,6 +139,14 @@ export function cultureMonthly(world: World, groups: Person[][]): void {
   }
   const prestigeSorted = world.people.map((p) => p.prestige).sort((a, b) => a - b);
   const topCut = prestigeSorted[Math.floor(prestigeSorted.length * 0.9)] ?? Infinity;
+  let nobles = 0;
+  let grown = 0;
+  for (const p of world.people) {
+    if (ageYears(world, p) < ADULT_AGE) continue;
+    grown++;
+    if (p.noble) nobles++;
+  }
+  const nobleShare = grown ? nobles / grown : 0;
 
   for (const s of world.settlements) {
     const people = groups[s.id];
@@ -122,7 +158,7 @@ export function cultureMonthly(world: World, groups: Person[][]): void {
     for (const p of people) {
       const age = ageYears(world, p);
       if (age < ADULT_AGE) continue;
-      const c = context(world, p, s, avgO, avgW, kin, topCut, age);
+      const c = context(world, p, s, avgO, avgW, kin, topCut, age, l, nobleShare);
       const suffering = clamp(p.hunger + p.cold * 0.5, 0, 1);
       for (let d = 0; d < DIMS.length; d++) {
         const row = p.prefs[d];
@@ -161,7 +197,7 @@ function settlementMean(people: Person[]): number[][] {
   return mean;
 }
 
-function context(world: World, p: Person, s: Settlement, avgO: number, avgW: number, kin: Set<number>, topCut: number, age: number): Ctx {
+function context(world: World, p: Person, s: Settlement, avgO: number, avgW: number, kin: Set<number>, topCut: number, age: number, l: Person | undefined, nobleShare: number): Ctx {
   let dependents = 0;
   for (const id of p.childIds) {
     const k = personById(world, id);
@@ -189,5 +225,10 @@ function context(world: World, p: Person, s: Settlement, avgO: number, avgW: num
     farmer: p.occ === OCC.farm ? 1 : 0,
     mismatch,
     age,
+    noble: p.noble ? 1 : 0,
+    nobleShare,
+    minority: l && p.ethnicity !== l.ethnicity ? 1 : 0,
+    ruling: l && l.faction >= 0 && p.faction === l.faction ? 1 : 0,
+    opposition: p.faction >= 0 && (!l || p.faction !== l.faction) ? 1 : 0,
   };
 }

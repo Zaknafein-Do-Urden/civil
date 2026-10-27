@@ -139,3 +139,41 @@ describe('multiple polities', () => {
     expect(stateHash(b)).toBe(stateHash(a));
   });
 });
+
+describe('factions, suffrage and checks', () => {
+  it('forms factions whose members point at existing factions', () => {
+    const w = createWorld({ seed: 'fx', culture: preset('liberal'), population: 300, npcCount: 0 });
+    runDays(w, 3 * DAYS_PER_YEAR);
+    const ids = new Set(w.polity.factions.map((f) => f.id));
+    expect(w.polity.factions.length).toBeGreaterThan(1);
+    for (const p of w.people) if (p.faction >= 0) expect(ids.has(p.faction)).toBe(true);
+    const power = w.polity.factions.reduce((a, f) => a + f.power, 0);
+    expect(power).toBeLessThanOrEqual(1.0001);
+  });
+
+  it('loads saves from before the suffrage and checks dimensions', () => {
+    const w = createWorld({ seed: 'oldsave', population: 200, npcCount: 1, npcPopulation: 100 });
+    runDays(w, 100);
+    const old = JSON.parse(serialize(w));
+    for (const sc of [old, ...old.npcs]) {
+      delete sc.polity.factions;
+      delete sc.polity.factionSeq;
+      delete sc.polity.vetoed;
+      sc.polity.institutions.length = 9;
+      sc.polity.active.length = 9;
+    }
+    for (const s of old.settlements) s.practiced.length = 9;
+    for (const p of old.people) {
+      p.prefs.length = 9;
+      delete p.faction;
+      delete p.noble;
+      delete p.rank;
+      delete p.originRank;
+    }
+    const b = deserialize(JSON.stringify(old));
+    expect(b.polity.institutions.length).toBe(11);
+    expect(b.people[0].prefs.length).toBe(11);
+    runDays(b, DAYS_PER_YEAR);
+    expect(b.stats.length).toBe(1);
+  });
+});

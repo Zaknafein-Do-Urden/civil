@@ -53,6 +53,16 @@ export interface Params {
   baseReach: number;
   enforceThreshold: number;
   termYears: number;
+  // Factions, suffrage, checks (DESIGN.md §13)
+  factionEngagement: number;
+  maxFactions: number;
+  factionKin: number;
+  factionIdentity: number;
+  factionDiscipline: number;
+  partyLoyalty: number;
+  uncheckedCoup: number;
+  impeachRate: number;
+  checkedGraft: number;
   // Culture
   interestRate: number;
   conformRate: number;
@@ -121,6 +131,15 @@ export const DEFAULT_PARAMS: Params = {
   baseReach: 8,
   enforceThreshold: 0.45,
   termYears: 10,
+  factionEngagement: 0.4,
+  maxFactions: 6,
+  factionKin: 0.25,
+  factionIdentity: 0.15,
+  factionDiscipline: 0.5,
+  partyLoyalty: 1.5,
+  uncheckedCoup: 0.1,
+  impeachRate: 0.5,
+  checkedGraft: 0.5,
   interestRate: 0.012,
   conformRate: 0.02,
   experienceRate: 0.012,
@@ -195,6 +214,15 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'baseReach', name: '管理半径', desc: '首领在无官吏、无科技时能有效管理的通行距离', min: 2, max: 30, step: 1 },
   { key: 'enforceThreshold', name: '执行门槛', desc: '执行力低于此值时，聚落按本地习惯行事', min: 0, max: 1, step: 0.05 },
   { key: 'termYears', name: '选举任期', desc: '选举制下领袖任期（年）', min: 2, max: 30, step: 1 },
+  { key: 'factionEngagement', name: '政治参与门槛', desc: '参与度（野心、不从众、不满、职位）达到此值的成年人才会加入派系；派系领袖的近亲总会跟随', min: 0, max: 1, step: 0.05 },
+  { key: 'maxFactions', name: '派系上限', desc: '一个政体最多同时存在的派系（政党）数', min: 1, max: 12, step: 1 },
+  { key: 'factionKin', name: '亲族纽带', desc: '同姓（同一父系）在选择派系时相当于多大的主张接近度；越大越容易形成家族派系', min: 0, max: 1, step: 0.05 },
+  { key: 'factionIdentity', name: '身份纽带', desc: '同民族、同一职业阶层、同一聚落各自相当于多大的主张接近度', min: 0, max: 0.6, step: 0.05 },
+  { key: 'factionDiscipline', name: '派系纪律', desc: '表决时成员跟随派系整体主张而不是自己意见的程度：0 = 各投各的，1 = 完全按派系投票', min: 0, max: 1, step: 0.05 },
+  { key: 'partyLoyalty', name: '党派忠诚', desc: '选举中选民投给本派候选人的额外倾向（与"主张接近"在同一尺度上，约 0～6）', min: 0, max: 5, step: 0.1 },
+  { key: 'uncheckedCoup', name: '无制衡政变风险', desc: '没有制衡时，合法性低于"40% + 此值"就可能有人发动政变（有制衡时为 40%，且政变概率减半）', min: 0, max: 0.4, step: 0.02 },
+  { key: 'impeachRate', name: '罢免概率', desc: '有制衡、首领合法性低于 40% 且其派系在议事会/大会中不占多数时，每年被和平罢免的概率', min: 0, max: 1, step: 0.05 },
+  { key: 'checkedGraft', name: '制衡抑制腐败', desc: '议事会否决下掌权者侵吞公库的比例乘以 (1−此值×0.6)，大会复决下乘以 (1−此值)', min: 0, max: 1, step: 0.05 },
   { key: 'interestRate', name: '利益驱动', desc: '个人利益改变倾向的速度（每月）', min: 0, max: 0.2, step: 0.005 },
   { key: 'conformRate', name: '从众', desc: '向周围人看齐的速度（每月）', min: 0, max: 0.2, step: 0.005 },
   { key: 'experienceRate', name: '经历', desc: '受苦经历让人否定现行制度的速度（每月）', min: 0, max: 0.2, step: 0.005 },

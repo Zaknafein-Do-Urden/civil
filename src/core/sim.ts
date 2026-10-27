@@ -18,6 +18,7 @@ import {
   updatePrestige,
 } from './politics';
 import { cultureMonthly } from './culture';
+import { migrateFactions, updateFactions, updateRanks } from './factions';
 import { diseaseMonthly } from './disease';
 import { updateLocalRulers } from './control';
 import { updateDemand, yearStats } from './stats';
@@ -371,6 +372,8 @@ function yearly(world: World, rng: Rng): void {
   updateEnforcement(world);
   updatePracticed(world, groups);
   updateLocalRulers(world, groups);
+  updateRanks(world);
+  updateFactions(world);
   institutionalChange(world);
   unrest(world, rng);
   maybeElection(world, rng);
@@ -413,6 +416,7 @@ export function deserialize(json: string): World {
     }
   }
   migrateLabor(w);
+  migrateFactions(w); // saves from before factions, suffrage and checks
   // saves from before ethnicity and epidemics
   for (const s of w.settlements) {
     s.governor ??= -1;
