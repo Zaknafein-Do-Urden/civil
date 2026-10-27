@@ -63,6 +63,7 @@ const settlementLink = (w: World, id: number): string => {
 function roleName(p: Person): string {
   if (p.role === 'leader') return '首领';
   if (p.role === 'council') return '长老';
+  if (p.role === 'governor') return '镇守';
   if (p.occ === OCC.admin) return '官吏';
   return '';
 }
@@ -239,7 +240,7 @@ const settlement: Tab = {
     const diff = DIMS.map((d, di) => `<div class="small">${d.name}：<b>${esc(optName(d.id, s.practiced[di]))}</b>${s.practiced[di] !== w.polity.institutions[di] ? ' <span style="color:var(--warn)">（与国家不同）</span>' : ''}</div>`).join('');
     el.innerHTML = `<div class="person-head"><h3><span style="color:${settlementColor(s.id)}">●</span> ${esc(s.name)}${s.id === w.polity.capital ? ' ★首都' : ''} <span class="small muted">${esc(w.polity.name)}${s.origin !== s.polity ? ' · 被征服' : ''}</span></h3><a class="link" data-settlement="-1">全部聚落</a></div>
       <div class="muted small">建于${formatDate(s.founded)} · ${TERRAIN_NAMES[tile.terrain]} · 年均 ${tile.temp.toFixed(0)}°C · ${tile.river ? '河畔' : ''}${tile.coast ? '海滨' : ''}</div>
-      <div class="muted small">民族：${ethnicText || '—'}</div>
+      <div class="muted small">民族：${ethnicText || '—'}${s.origin !== s.polity ? ` · 镇守：${s.governor >= 0 && personById(w, s.governor)?.role === 'governor' ? personLink(w, s.governor) : '暂缺'}` : ''}</div>
       ${s.epidemic > 0 ? `<div class="small" style="color:var(--warn)">${esc(s.epiName)}正在流行，已有 ${s.epiDeaths} 人病死</div>` : s.immunity > 0.3 ? `<div class="muted small">多数人得过上一场疫病，暂时免疫（${pct(s.immunity)}）</div>` : ''}
       <div class="kpis" style="margin-top:6px">
         <div class="kpi"><div class="k">人口</div><div class="v">${people.length}</div></div>

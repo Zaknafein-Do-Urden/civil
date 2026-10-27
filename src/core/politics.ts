@@ -34,7 +34,7 @@ export function updatePrestige(world: World, groups: Person[][]): void {
         p.prestige *= 0.9;
         continue;
       }
-      const role = p.role === 'leader' ? 1.5 : p.role === 'council' ? 0.8 : p.occ === OCC.admin ? 0.4 : 0;
+      const role = p.role === 'leader' ? 1.5 : p.role === 'council' || p.role === 'governor' ? 0.8 : p.occ === OCC.admin ? 0.4 : 0;
       const target =
         ((p.social - 50) / 50) * 0.6 +
         clamp(p.output / avgOut, 0, 3) * 0.3 +
@@ -161,6 +161,8 @@ export function payAdmins(world: World, rng: Rng): void {
 
 // --- leadership --------------------------------------------------------
 
+export const GOVERNOR_ENFORCEMENT = 0.75;
+
 function strength(p: Person): number {
   return (p.physical / 50) * (0.5 + p.ambition) * (1 + clamp(p.prestige, 0, 3));
 }
@@ -175,11 +177,23 @@ function similarity(a: Person, b: Person): number {
   return s / a.prefs.length;
 }
 
+/** A conquered people's member living in a settlement not yet assimilated: ruled, never ruling. */
+export function isSubject(world: World, p: Person): boolean {
+  const s = world.settlements[p.settlement];
+  return s.origin !== s.polity && p.ethnicity !== s.polity;
+}
+
+/** People who may hold office in their polity: not subjects, unless there is nobody else. */
+function officeHolders(world: World, ok: (p: Person) => boolean): Person[] {
+  const pool = world.people.filter((p) => ok(p) && !isSubject(world, p));
+  return pool.length ? pool : world.people.filter(ok);
+}
+
 /** Choose a leader according to the succession institution. Returns the new leader. */
 export function chooseLeader(world: World, rng: Rng, reason: string): Person | undefined {
   const pol = world.polity;
   const old = leader(world);
-  const pool = world.people.filter((p) => ageYears(world, p) >= 20);
+  const pool = officeHolders(world, (p) => ageYears(world, p) >= 20 && p.role !== 'governor');
   if (!pool.length) return undefined;
   const rule = pol.institutions[D.succession];
   let pick: Person | undefined;
@@ -292,8 +306,7 @@ export function chooseCouncil(world: World): void {
   const rule = pol.institutions[D.succession];
   const key = (p: Person) =>
     rule === SUCC.exam ? (p.math + p.social) / 2 : rule === SUCC.hereditary ? p.prestige + p.plots * 0.05 : p.prestige;
-  const cands = world.people
-    .filter((p) => ageYears(world, p) >= 25 && p.role !== 'leader')
+  const cands = officeHolders(world, (p) => ageYears(world, p) >= 25 && p.role !== 'leader' && p.role !== 'governor')
     .sort((a, b) => key(b) - key(a) || a.id - b.id)
     .slice(0, COUNCIL_SIZE);
   pol.councilIds = cands.map((p) => p.id);
@@ -341,8 +354,7 @@ export function appointAdmins(world: World): void {
     }
     return k;
   };
-  const cands = world.people
-    .filter((p) => ageYears(world, p) >= 18 && ageYears(world, p) < 65 && p.occ !== OCC.admin && p.role === 'none')
+  const cands = officeHolders(world, (p) => ageYears(world, p) >= 18 && ageYears(world, p) < 65 && p.occ !== OCC.admin && p.role === 'none')
     .sort((a, b) => key(b) - key(a) || a.id - b.id)
     .slice(0, want - current.length);
   for (const p of cands) {
@@ -374,15 +386,20 @@ export function updateEnforcement(world: World): void {
   const l = leader(world);
   const reach =
     P.baseReach *
-    (1 + 0.25 * Math.sqrt(admins)) *
+    (1 + (has(world, 'bureaucracy') ? 0.4 : 0.25) * Math.sqrt(admins)) *
     (has(world, 'tally') ? 1.2 : 1) *
     (has(world, 'writing') ? 2 : 1) *
+    (has(world, 'relay') ? 1.4 : 1) *
+    (has(world, 'bureaucracy') ? 1.6 : 1) *
     (l ? 0.7 + (l.social / 100) * 0.6 : 0.7);
   for (const s of world.settlements) {
     if (!s.alive) continue;
     const c = costs[s.tile];
     s.distance = Number.isFinite(c) ? c : 9999;
     s.enforcement = s.id === cap.id ? 1 : clamp(1.25 - s.distance / reach, 0, 1);
+    // a governor on the spot carries out the conquerors' rules however far the capital is
+    const g = personById(world, s.governor);
+    if (g && g.settlement === s.id && g.role === 'governor') s.enforcement = Math.max(s.enforcement, GOVERNOR_ENFORCEMENT);
   }
 }
 

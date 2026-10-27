@@ -10,7 +10,7 @@ import { hexDistance, neighbors } from './map';
 import { TECH_INDEX } from './tech';
 import { killPeople } from './demography';
 import { appointAdmins, chooseCouncil, chooseLeader, powerWeights, updateEnforcement } from './politics';
-import { PLAYER, allPolities, inPolity, newScope, polityOf, polityView, scopeOf } from './nations';
+import { PLAYER, allPolities, inPolity, newScope, polityName, polityOf, polityView, scopeOf, takenNames } from './nations';
 import { UNSPECIFIED } from './rules';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, OCC } from './types';
@@ -390,6 +390,7 @@ export function diplomacyYearly(world: World, rng: Rng): void {
   }
 
   revolts(world, rng, R);
+  secession(world, rng, R);
   if (world.wars.length > MAX_ENDED_WARS) {
     const ended = world.wars.filter((w) => w.end >= 0);
     const drop = new Set(ended.slice(0, world.wars.length - MAX_ENDED_WARS).map((w) => w.id));
@@ -652,7 +653,7 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
   for (const p of world.people) {
     if (p.settlement !== s.id) continue;
     if (p.role !== 'none') {
-      addBio(world, p, `${s.name}被${winner.pol.name}攻占，失去${p.role === 'leader' ? '首领' : '长老'}之位`);
+      addBio(world, p, `${s.name}被${winner.pol.name}攻占，失去${p.role === 'leader' ? '首领' : p.role === 'governor' ? '镇守' : '长老'}之位`);
       if (p.role === 'leader') captured.push(p);
       p.role = 'none';
     }
@@ -674,12 +675,15 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
   const rel = relation(world, winner.id, loser.id)!;
   addGrudge(rel, loser.id, 0.5);
   if (s.origin === winner.id) s.conquered = -1; // a lost settlement taken back
+  s.governor = -1;
   const settlers = victims.length ? settle(world, s, winner) : 0;
+  const gov = s.origin === winner.id ? undefined : appointGovernor(world, s);
   addEvent(world, 'war', involvesPlayer(winner.id, loser.id), `征服：${s.name}归属${winner.pol.name}`,
     `${s.name}（${s.pop} 人）被${winner.pol.name}征服${s.origin === winner.id ? '（收复故地）' : '，幸存的居民保留着自己的习俗，对新统治者心怀不满'}。` +
     `${victims.length ? `城中 ${victims.length} 名${lpol.name}男子被屠杀。` : ''}` +
     `${slainLeader ? `首领${slainLeader.name}被杀。` : captured.length ? `${lpol.name}的首领${captured[0].name}被俘。` : ''}` +
-    `${settlers ? `${winner.pol.name}的 ${settlers} 名单身男子迁入，娶当地妇女为妻。` : ''}`, captured.map((p) => p.id), s.id);
+    `${settlers ? `${winner.pol.name}的 ${settlers} 名单身男子迁入，娶当地妇女为妻。` : ''}` +
+    `${gov ? `${winner.pol.name}派${gov.name}镇守${s.name}。` : ''}`, captured.map((p) => p.id), s.id);
   if (!loser.settlements.length) {
     extinguish(world, lpol, `的最后一个聚落${s.name}被${winner.pol.name}攻占`);
     R[loser.id] = undefined;
@@ -715,6 +719,61 @@ function settle(world: World, s: Settlement, winner: Realm): number {
   return bachelors.length;
 }
 
+/**
+ * The conquerors put one of their own in charge of a conquered settlement: a man of the ruling people
+ * already there, or one brought in with his household from a nearby home settlement. Prestige and
+ * kinship with the ruler count.
+ */
+function appointGovernor(world: World, s: Settlement, outsider = false): Person | undefined {
+  const ruler = s.polity;
+  const cur = personById(world, s.governor);
+  if (cur && cur.settlement === s.id && cur.role === 'governor') return cur;
+  const lord = personById(world, polityOf(world, ruler).leaderId);
+  const here = world.map.tiles[s.tile];
+  let best: Person | undefined;
+  let bs = -Infinity;
+  for (const p of world.people) {
+    if (p.role !== 'none' || p.ethnicity !== ruler || p.sex !== 1) continue;
+    const home = world.settlements[p.settlement];
+    if (home.polity !== ruler || (home.id !== s.id && home.origin !== ruler) || (outsider && home.id === s.id)) continue;
+    const age = ageYears(world, p);
+    if (age < 25 || age > 60) continue;
+    const d = hexDistance(here, world.map.tiles[home.tile]);
+    if (d > world.params.campaignRange) continue;
+    const kin = lord && p.name[0] === lord.name[0] ? 1 : 0;
+    const sc = p.prestige + kin + (home.id === s.id ? 0.5 : 0) + (p.social - 50) / 100 - d * 0.02;
+    if (sc > bs || (sc === bs && best && p.id < best.id)) {
+      bs = sc;
+      best = p;
+    }
+  }
+  if (!best) return undefined;
+  if (best.settlement !== s.id) {
+    const from = world.settlements[best.settlement];
+    const household = [best, personById(world, best.spouseId), ...best.childIds.map((id) => personById(world, id))]
+      .filter((k): k is Person => !!k && k.settlement === from.id && (k === best || k.id === best!.spouseId || ageYears(world, k) < ADULT_AGE));
+    for (const k of household) {
+      k.settlement = s.id;
+      k.plots = 0;
+    }
+  }
+  best.role = 'governor';
+  best.notable = true;
+  if (best.occ === OCC.admin) best.occ = OCC.gather;
+  s.governor = best.id;
+  addBio(world, best, `受${polityOf(world, ruler).name}委派镇守${s.name}`);
+  return best;
+}
+
+/** End a settlement's governorship (assimilated, or lost). */
+function dismissGovernor(world: World, s: Settlement): Person | undefined {
+  const g = personById(world, s.governor);
+  s.governor = -1;
+  if (!g || g.role !== 'governor') return undefined;
+  g.role = 'none';
+  return g;
+}
+
 // --- revolts of conquered settlements -----------------------------------
 
 function revolts(world: World, rng: Rng, R: (Realm | undefined)[]): void {
@@ -722,12 +781,20 @@ function revolts(world: World, rng: Rng, R: (Realm | undefined)[]): void {
     if (!s.alive || s.origin === s.polity) continue;
     if (s.conquered >= 0 && world.day - s.conquered > ASSIMILATE_YEARS * DAYS_PER_YEAR) {
       s.origin = s.polity;
+      const g = dismissGovernor(world, s);
+      if (g) addBio(world, g, `${s.name}已被同化，卸下镇守之职`);
       addEvent(world, 'misc', false, `同化：${s.name}`, `${s.name}的居民已经视自己为${polityOf(world, s.polity).name}的一部分。`, [], s.id);
       continue;
     }
     const ruler = R[s.polity];
     if (!ruler) continue;
-    const locals = world.people.filter((p) => p.settlement === s.id && ageYears(world, p) >= ADULT_AGE);
+    const cur = personById(world, s.governor);
+    if (!cur || cur.settlement !== s.id || cur.role !== 'governor') {
+      const ng = appointGovernor(world, s);
+      if (ng) addEvent(world, 'war', s.polity === PLAYER, `新镇守：${s.name}`, `${ruler.pol.name}派${ng.name}镇守${s.name}。`, [ng.id], s.id);
+    }
+    // the conquered rise up; the conquerors' own settlers do not
+    const locals = world.people.filter((p) => p.settlement === s.id && ageYears(world, p) >= ADULT_AGE && p.ethnicity !== s.polity);
     if (locals.length < 10) continue;
     let g = 0;
     for (const p of locals) g += p.grievance;
@@ -746,6 +813,8 @@ function revolts(world: World, rng: Rng, R: (Realm | undefined)[]): void {
       const old = ruler.pol;
       const killed = garrison.men.filter(() => rng.chance(0.08));
       bury(world, ruler, killed);
+      const gov = dismissGovernor(world, s);
+      if (gov && gov.settlement === s.id) bury(world, ruler, [gov], '被起义者所杀'); // the conquerors' man dies first
       if (home.alive) {
         s.polity = s.origin;
         s.conquered = -1;
@@ -789,7 +858,9 @@ function independence(world: World, rng: Rng, s: Settlement, locals: Person[]): 
     return best;
   });
   sc.polity.active = [...ruler.polity.active];
+  const taken = takenNames(world);
   sc.polity.name = `${s.name}${rng.pick(['部', '氏', '邦'])}`;
+  if (taken.has(sc.polity.name)) sc.polity.name = polityName(rng, taken);
   sc.polity.capital = s.id;
   world.npcs.push(sc);
   s.polity = id;
@@ -805,6 +876,122 @@ function independence(world: World, rng: Rng, s: Settlement, locals: Person[]): 
     appointAdmins(v);
     updateEnforcement(v);
   });
+}
+
+// --- secession of settlements beyond the state's reach -------------------
+
+const MAX_YEARLY_SECESSION = 0.3;
+
+function localPrefs(people: Person[]): number[][] {
+  return meanPrefs({ adults: people } as Realm);
+}
+
+/**
+ * Own settlements the state no longer reaches (enforcement below the threshold) pay little tax, follow
+ * their own customs and cost the ruler legitimacy. Each year they may break away: join a strong
+ * neighbour with similar customs, or go their own way. The ruler may try to hold them by force;
+ * a settlement held that way gets a governor from the core and keeps resenting it.
+ */
+function secession(world: World, rng: Rng, R: (Realm | undefined)[]): void {
+  const P = world.params;
+  const out = new Map<number, number>(); // ruler -> people out of reach
+  for (const s of world.settlements) {
+    if (!s.alive || s.origin !== s.polity) continue;
+    const ruler = R[s.polity];
+    if (!ruler || s.id === ruler.pol.capital) continue;
+    const folk = world.people.filter((p) => p.settlement === s.id);
+    const gov = personById(world, s.governor);
+    const held = !!gov && gov.settlement === s.id && gov.role === 'governor';
+    if (held) for (const p of folk) if (p !== gov) p.grievance = clamp(p.grievance + 0.04, 0, 1); // ruled by an outsider
+    if (s.enforcement >= P.enforceThreshold) continue;
+    out.set(ruler.id, (out.get(ruler.id) ?? 0) + folk.length);
+    const locals = folk.filter((p) => ageYears(world, p) >= ADULT_AGE);
+    if (locals.length < 10) continue;
+    for (const p of locals) p.grievance = clamp(p.grievance + 0.02, 0, 1); // taxed, but neither protected nor fed
+    let g = 0;
+    for (const p of locals) g += p.grievance;
+    g /= locals.length;
+    const mine = localPrefs(locals);
+    const gap = 1 - similarity(mine, meanPrefs(ruler));
+    const remote = clamp((P.enforceThreshold - s.enforcement) / P.enforceThreshold, 0, 1);
+    const want = remote * 0.4 + (g - 0.2) * 0.8 + gap * 1.5 - ruler.pol.legitimacy * 0.3;
+    if (!rng.chance(clamp(want * 0.5 * P.secession, 0, MAX_YEARLY_SECESSION))) continue;
+
+    // a strong neighbour with similar ways nearby is worth joining
+    const here = world.map.tiles[s.tile];
+    const ownStr = Math.max(0.1, strength(world, ruler));
+    let to: Realm | undefined;
+    let best = 0;
+    for (const nb of R) {
+      if (!nb || nb.id === ruler.id || !nb.settlements.length) continue;
+      const r = relation(world, nb.id, ruler.id);
+      if (!r || r.status === 'alliance' || r.status === 'none') continue;
+      let d = Infinity;
+      for (const x of nb.settlements) d = Math.min(d, hexDistance(here, world.map.tiles[x.tile]));
+      if (d > P.contactRange) continue;
+      const score = similarity(mine, meanPrefs(nb)) * 2 + clamp(ln(Math.max(0.1, strength(world, nb)) / ownStr), -1, 1) * 0.5 - (d / P.contactRange) * 0.5;
+      if (score > best) {
+        best = score;
+        to = nb;
+      }
+    }
+    if (best < 1.2) to = undefined;
+
+    // the ruler tries to keep it, if the men are there
+    const who = involvesPlayer(ruler.id, to?.id ?? -1);
+    const fighters = locals.filter((p) => fighter(world, p) > 0);
+    let rv = 0;
+    for (const p of fighters) rv += fighter(world, p);
+    rv *= weapons(world, ruler.id);
+    const force = raise(world, rng, ruler, here, P.campaignRange, 0.4, -1);
+    if (force.value > rv * 1.5 && rng.chance(0.3 + 0.5 * ruler.pol.legitimacy)) {
+      const killed = fighters.filter(() => rng.chance(0.1));
+      bury(world, ruler, killed, '抗拒官府被杀');
+      for (const p of locals) p.grievance = clamp(p.grievance + 0.15, 0, 1);
+      ruler.pol.legitimacy = clamp(ruler.pol.legitimacy - 0.05, 0, 1);
+      const ng = held ? gov : appointGovernor(world, s, true);
+      addEvent(world, 'war', who, `强留：${s.name}`,
+        `${s.name}想${to ? `投靠${to.pol.name}` : '自立'}，${ruler.pol.name}出兵强行留住了它，${killed.length} 人被杀。` +
+        `${ng && !held ? `${ng.name}被派去镇守。` : ''}当地人怨恨更深，首领威信受损。`, ng ? [ng.id] : [], s.id);
+      continue;
+    }
+
+    const old = ruler.pol;
+    if (held) {
+      const gv = dismissGovernor(world, s);
+      if (gv) bury(world, ruler, [gv], '被分离者所杀');
+    }
+    for (const p of folk) {
+      if (p.role === 'council') p.role = 'none';
+      if (p.occ === OCC.admin) p.occ = OCC.gather;
+    }
+    old.councilIds = old.councilIds.filter((id) => personById(world, id)?.settlement !== s.id);
+    ruler.settlements = ruler.settlements.filter((x) => x.id !== s.id);
+    if (to) {
+      s.polity = to.id;
+      s.origin = to.id; // joined of their own will: not a conquered people
+      s.conquered = -1;
+      to.settlements.push(s);
+      for (const p of folk) p.grievance *= 0.6;
+      addGrudge(relation(world, to.id, old.id)!, old.id, 0.4);
+      addEvent(world, 'war', who, `投靠：${s.name}归附${to.pol.name}`,
+        `${s.name}离${old.name}的都城太远，管不到也护不住，${s.pop} 名居民转而投靠了邻近的${to.pol.name}。`, [], s.id);
+    } else {
+      independence(world, rng, s, locals);
+      for (const p of folk) p.grievance *= 0.5;
+      const r = relation(world, s.polity, old.id);
+      if (r) addGrudge(r, old.id, 0.4);
+      addEvent(world, 'war', who, `分离：${s.name}自立`,
+        `${s.name}离${old.name}的都城太远，不再听从号令，建立了${polityOf(world, s.polity).name}。`, [], s.id);
+    }
+    if (!ruler.settlements.length) extinguish(world, old, '失去了所有聚落');
+  }
+  // holding land the state cannot govern costs the ruler standing
+  for (const [id, n] of out) {
+    const r = R[id];
+    if (!r || !r.people.length) continue;
+    r.pol.legitimacy = clamp(r.pol.legitimacy - 0.1 * (n / r.people.length), 0, 1);
+  }
 }
 
 // --- interface for the rest of the simulation --------------------------

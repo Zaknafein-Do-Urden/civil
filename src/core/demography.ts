@@ -19,13 +19,17 @@ export function settlementName(rng: Rng): string {
   return rng.pick(SETTLEMENT_PREFIX) + rng.pick(SETTLEMENT_NAMES);
 }
 
+/**
+ * Background yearly death rate by age, close to observed foragers (Gurven & Kaplan 2007) minus the causes
+ * modelled on their own: hunting accidents, epidemics, war, hunger and cold.
+ */
 function yearlyMortality(age: number): number {
-  if (age < 1) return 0.15;
-  if (age < 5) return 0.03;
-  if (age < 15) return 0.008;
-  if (age < 40) return 0.01;
-  if (age < 60) return 0.02 + (age - 40) * 0.001;
-  return 0.04 * pow(1.09, age - 60);
+  if (age < 1) return 0.12;
+  if (age < 5) return 0.025;
+  if (age < 15) return 0.005;
+  if (age < 40) return 0.006;
+  if (age < 60) return 0.012 + (age - 40) * 0.0008;
+  return 0.035 * pow(1.09, age - 60);
 }
 
 export interface DeathRecord {
@@ -265,6 +269,7 @@ export function newSettlement(world: World, rng: Rng, tile: number): Settlement 
     polity: world.polity.id,
     origin: world.polity.id,
     conquered: -1,
+    governor: -1,
     epidemic: 0,
     epiSeverity: 0,
     epiDeaths: 0,
@@ -328,7 +333,7 @@ export function maybeFission(world: World, rng: Rng, s: Settlement, people: Pers
   const site = findSite(world, s.tile, 3, over ? 12 : 7);
   if (site < 0) return undefined;
 
-  const adults = people.filter((p) => ageYears(world, p) >= 20 && p.role !== 'leader' && p.role !== 'council');
+  const adults = people.filter((p) => ageYears(world, p) >= 20 && p.role === 'none');
   if (!adults.length) return undefined;
   let founder = adults[0];
   for (const p of adults) if (p.ambition * (1 + p.prestige) > founder.ambition * (1 + founder.prestige)) founder = p;

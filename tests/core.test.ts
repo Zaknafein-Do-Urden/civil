@@ -110,7 +110,9 @@ describe('multiple polities', () => {
   it('brings neighbours into contact', () => {
     const w = createWorld({ seed: 'npc', population: 400, npcCount: 3, npcPopulation: 150 });
     runDays(w, 3 * DAYS_PER_YEAR);
-    expect(w.relations.length).toBe(6);
+    const n = 1 + w.npcs.length; // breakaway settlements may have founded more polities
+    expect(n).toBeGreaterThanOrEqual(4);
+    expect(w.relations.length).toBe((n * (n - 1)) / 2);
     expect(w.relations.some((r) => r.status !== 'none')).toBe(true);
     expect(w.events.some((e) => e.title.startsWith('首次接触'))).toBe(true);
   });

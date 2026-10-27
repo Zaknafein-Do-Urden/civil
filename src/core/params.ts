@@ -69,6 +69,7 @@ export interface Params {
   raidLoot: number;
   tributeRate: number;
   conquestMassacre: number;
+  secession: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -131,6 +132,7 @@ export const DEFAULT_PARAMS: Params = {
   raidLoot: 0.35,
   tributeRate: 0.1,
   conquestMassacre: 1,
+  secession: 1,
 };
 
 export interface ParamDef {
@@ -201,5 +203,6 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'casualtyRate', name: '伤亡率', desc: '一次势均力敌的战役中参战者的阵亡比例', min: 0, max: 0.5, step: 0.01 },
   { key: 'raidLoot', name: '劫掠比例', desc: '劫掠完全得手时抢走目标聚落存粮的比例', min: 0, max: 1, step: 0.05 },
   { key: 'conquestMassacre', name: '征服屠杀', desc: '聚落被攻陷时，被征服民族的男性被杀的比例（含男童）', min: 0, max: 1, step: 0.05 },
+  { key: 'secession', name: '分离倾向', desc: '管不到的聚落每年独立或投靠邻国的倾向倍数；0 表示从不分离', min: 0, max: 3, step: 0.1 },
   { key: 'tributeRate', name: '贡赋比例', desc: '朝贡国每年缴纳的公库与存粮比例', min: 0, max: 0.5, step: 0.01 },
 ];

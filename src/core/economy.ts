@@ -432,7 +432,7 @@ function homestead(world: World, s: Settlement, people: Person[], cleared: numbe
 
 function rankWeight(p: Person): number {
   if (p.role === 'leader') return 4;
-  if (p.role === 'council') return 2.5;
+  if (p.role === 'council' || p.role === 'governor') return 2.5;
   if (p.occ === OCC.admin) return 1.8;
   return 1 + clamp(p.prestige, 0, 2) * 0.15;
 }

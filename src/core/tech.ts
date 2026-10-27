@@ -55,6 +55,9 @@ export const TECHS: TechDef[] = [
   { id: 'palisade', name: '木栅寨墙', desc: '聚落防守战斗力 +50%', cost: 5000, prereq: ['agriculture'], domain: 'war', occs: [OCC.tool, OCC.farm], env: [] },
   { id: 'bronze_weapons', name: '青铜兵器', desc: '战斗力 +40%', cost: 9000, prereq: ['bronze'], domain: 'war', occs: [OCC.tool, OCC.hunt], env: [] },
   { id: 'chariot', name: '战车', desc: '进攻 +30%，出征半径 +50%', cost: 11000, prereq: ['wheel', 'husbandry'], domain: 'war', occs: [OCC.herd, OCC.tool], env: [] },
+  // Reach of the state: settlements beyond it break away or must be held by force (war.ts secession).
+  { id: 'relay', name: '驿道', desc: '管理半径 +40%', cost: 12000, prereq: ['wheel', 'tally'], domain: 'admin', occs: [OCC.admin, OCC.herd], env: [] },
+  { id: 'bureaucracy', name: '文官制度', desc: '管理半径 +60%，官吏越多管得越远', cost: 22000, prereq: ['writing'], domain: 'admin', occs: [OCC.admin, OCC.tinker], env: [] },
 ];
 
 export const TECH_INDEX: Record<string, number> = Object.fromEntries(TECHS.map((t, i) => [t.id, i]));

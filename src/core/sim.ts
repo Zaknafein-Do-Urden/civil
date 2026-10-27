@@ -23,7 +23,7 @@ import { updateDemand, yearStats } from './stats';
 import { emptyTileHistory, recordTileHistory } from './tiles';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
 import type { Command, Person, World } from './types';
-import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName } from './nations';
+import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName, takenNames } from './nations';
 import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
 
 export interface WorldConfig {
@@ -117,7 +117,7 @@ function foundTribe(world: World, rng: Rng, start: number, pop: number): void {
   }
   first.food = 90 * pop * world.params.foodNeedAdult; // three months of stores
   world.polity.capital = first.id;
-  if (!world.polity.name) world.polity.name = world.polity.id === PLAYER ? `${first.name}部落` : polityName(rng);
+  if (!world.polity.name) world.polity.name = world.polity.id === PLAYER ? `${first.name}部落` : polityName(rng, takenNames(world));
 
   addEvent(world, 'misc', false, '部落诞生',
     `${pop} 人在${first.name}一带生活。`);
@@ -413,6 +413,7 @@ export function deserialize(json: string): World {
   migrateLabor(w);
   // saves from before ethnicity and epidemics
   for (const s of w.settlements) {
+    s.governor ??= -1;
     if (s.epidemic === undefined) Object.assign(s, { epidemic: 0, epiSeverity: 0, epiDeaths: 0, epiName: '', immunity: 0 });
   }
   for (const p of w.people) p.ethnicity ??= w.settlements[p.settlement].origin;

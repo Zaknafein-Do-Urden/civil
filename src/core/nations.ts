@@ -30,8 +30,17 @@ export const emptyYearAcc = (): YearAcc => ({ births: 0, deaths: 0, starved: 0, 
 const NAME_A = '有熊虞夏商姜姬嬴姒妫风偃允祁己任芈曹董彭秃斟'.split('');
 const NAME_B = '氏部族戎夷'.split('');
 
-export function polityName(rng: Rng): string {
-  return rng.pick(NAME_A) + rng.pick(NAME_A) + rng.pick(NAME_B);
+/** A name no other polity has had, so every people (named after its polity) is distinguishable. */
+export function polityName(rng: Rng, taken: Set<string>): string {
+  for (let i = 0; ; i++) {
+    const name = rng.pick(NAME_A) + rng.pick(NAME_A) + rng.pick(NAME_B);
+    if (!taken.has(name)) return name;
+    if (i > 50) return name + (taken.size + 1);
+  }
+}
+
+export function takenNames(world: World): Set<string> {
+  return new Set(allPolities(world).map((p) => p.name));
 }
 
 export function scopeOf(world: World, id: number): PolityScope {
