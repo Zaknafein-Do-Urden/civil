@@ -11,7 +11,7 @@ import { addBio, ageYears, createFounder, personById, surnameOf } from './person
 import { addEvent } from './events';
 import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles } from './economy';
 import { exclusion, migrateLabor, updateLabor } from './labor';
-import { abandonEmpty, assignGuardian, dailyDemography, findSite, marriages, maybeFission, migrate, newSettlement } from './demography';
+import { abandonEmpty, assignGuardian, dailyDemography, marriages, maybeFission, migrate, newSettlement } from './demography';
 import {
   appointAdmins, chooseCouncil, chooseLeader, corruption, ensureLeader, institutionalChange, maybeElection, payAdmins,
   plannerMath, startMovement, unrest, updateActive, updateEnforcement, updateLegitimacy, updateMood, updatePracticed,
@@ -25,16 +25,11 @@ import type { Command, Person, World } from './types';
 import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName } from './nations';
 import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
 
-/** Typical forager camp size; real local bands are 25–50 people (DESIGN.md §7). */
-export const DEFAULT_BAND_SIZE = 50;
-
 export interface WorldConfig {
   seed: string;
   culture?: CultureSetting;
   startTile?: number;
   population?: number;
-  /** People per starting band (camp); the tribe starts as several nearby bands. */
-  bandSize?: number;
   /** Number of NPC tribes placed elsewhere on the map (DESIGN.md §12.3). */
   npcCount?: number;
   /** Starting population of each NPC tribe. */
@@ -88,9 +83,8 @@ export function createWorld(cfg: WorldConfig): World {
   };
 
   const pop = cfg.population ?? 1000;
-  const bandSize = cfg.bandSize ?? DEFAULT_BAND_SIZE;
   const start = cfg.startTile !== undefined && isLand(map.tiles[cfg.startTile]) ? cfg.startTile : bestStartTile(world);
-  inPolity(world, PLAYER, (v) => foundTribe(v, rng, start, pop, bandSize));
+  inPolity(world, PLAYER, (v) => foundTribe(v, rng, start, pop));
 
   // NPC tribes elsewhere on the map, same rules, their own cultures (DESIGN.md §12.3)
   const home = map.tiles[start];
@@ -102,42 +96,30 @@ export function createWorld(cfg: WorldConfig): World {
     const closeness = 1 - (hexDistance(home, map.tiles[site]) - 9) / 30;
     const id = world.npcs.length + 1;
     world.npcs.push(newScope(rng, id, npcCulture(rng, culture, closeness)));
-    inPolity(world, id, (v) => foundTribe(v, rng, site, npcPop, bandSize));
+    inPolity(world, id, (v) => foundTribe(v, rng, site, npcPop));
   }
   initRelations(world);
   world.rng = rng.state;
   return world;
 }
 
-/** Bands of a tribe settle around the start tile; runs on the polity's view. */
-function foundTribe(world: World, rng: Rng, start: number, pop: number, bandSize: number): void {
-  const nBands = Math.max(1, Math.round(pop / bandSize));
+/** A tribe starts as a single camp on the start tile; runs on the polity's view. */
+function foundTribe(world: World, rng: Rng, start: number, pop: number): void {
+  // The whole tribe starts as one camp; it splits on its own once food runs short (maybeFission)
   const first = newSettlement(world, rng, start);
   const bands = [first];
-  for (let i = 1; i < nBands; i++) {
-    let site = -1;
-    for (const s of bands) {
-      site = findSite(world, s.tile, 3, 6);
-      if (site >= 0) break;
-    }
-    if (site < 0) break;
-    bands.push(newSettlement(world, rng, site));
-  }
   if (pop < SMALL_GROUP) {
     foundHouseholds(world, rng, first.id, pop);
   } else {
-    for (let i = 0; i < pop; i++) {
-      const s = bands[i % bands.length];
-      world.people.push(createFounder(world, rng, s.id));
-    }
+    for (let i = 0; i < pop; i++) world.people.push(createFounder(world, rng, first.id));
     formFamilies(world, rng);
   }
-  for (const s of bands) s.food = 30 * world.people.filter((p) => p.settlement === s.id).length;
+  first.food = 30 * pop;
   world.polity.capital = first.id;
   if (!world.polity.name) world.polity.name = world.polity.id === PLAYER ? `${first.name}部落` : polityName(rng);
 
   addEvent(world, 'misc', false, '部落诞生',
-    `${pop} 人分成 ${bands.length} 个群落，在${first.name}一带生活。`);
+    `${pop} 人在${first.name}一带生活。`);
   const groups = groupBySettlement(world);
   chooseLeader(world, rng, '部落推举首领');
   chooseCouncil(world);

@@ -2,7 +2,7 @@ import { DIMS, PRESETS, UNSPECIFIED } from '../core/rules';
 import type { CultureSetting, DimId } from '../core/rules';
 import { TERRAIN_NAMES, generateMap, isLand, siteScore, tilesWithin } from '../core/map';
 import './wikiView';
-import { DEFAULT_BAND_SIZE, DEFAULT_NPC_COUNT, DEFAULT_NPC_POPULATION, createWorld, deserialize, serialize, step } from '../core/sim';
+import { DEFAULT_NPC_COUNT, DEFAULT_NPC_POPULATION, createWorld, deserialize, serialize, step } from '../core/sim';
 import { PLAYER, peopleOf } from '../core/nations';
 import { focusBanner } from './diplomacy';
 import { ERAS } from '../core/tech';
@@ -110,23 +110,16 @@ function readNpcs(): { npcCount: number; npcPopulation: number } {
   };
 }
 
-function readBandSize(): number {
-  return Math.max(20, Math.min(500, +($('#band-size') as HTMLInputElement).value || DEFAULT_BAND_SIZE));
-}
-
-/** Tell the player up front that the tribe starts as several camps, not one village. */
+/** Tell the player up front how the tribe starts. */
 function updateBandHint(): void {
   const pop = readPopulation();
-  const n = Math.max(1, Math.round(pop / readBandSize()));
   const risk = pop < 30 ? '人数这么少，开局按几户人家生成；一两次意外死亡或连续生男/生女都可能让部落绝嗣，灭绝风险很高。' : '';
-  $('#band-hint').textContent = n === 1
-    ? `${pop} 人全部住在同一个营地。${risk}`
-    : `石器时代的人靠采集狩猎为生，一块地养不活太多人，所以 ${pop} 人不会住在同一个村落，而是分成约 ${n} 个群落（每个约 ${Math.round(pop / n)} 人），散布在出生地附近，共同组成一个部落。附近地形太差时群落会少一些、每个人多一些。群落之后会自行壮大、分裂、迁徙；真实的狩猎采集营地通常 25–50 人。`;
+  $('#band-hint').textContent = `${pop} 人一开始都住在出生地的同一个营地，靠周围 19 格土地采集狩猎（一格约能养活 5–10 人）。` +
+    `人多到这片土地养不活、或猎物野果被吃薄时，会有人带着家人出去另建营地。${risk}`;
 }
 
 ($('#seed') as HTMLInputElement).value = randomSeed();
 ($('#population') as HTMLInputElement).oninput = updateBandHint;
-($('#band-size') as HTMLInputElement).oninput = updateBandHint;
 ($('#seed') as HTMLInputElement).onchange = regenerate;
 $('#reroll').onclick = () => {
   ($('#seed') as HTMLInputElement).value = randomSeed();
@@ -135,7 +128,7 @@ $('#reroll').onclick = () => {
 $('#best-site').onclick = pickBestSite;
 $('#start').onclick = () => {
   const seed = ($('#seed') as HTMLInputElement).value.trim() || randomSeed();
-  startGame(createWorld({ seed, culture: readCulture(), startTile, population: readPopulation(), bandSize: readBandSize(), ...readNpcs() }));
+  startGame(createWorld({ seed, culture: readCulture(), startTile, population: readPopulation(), ...readNpcs() }));
 };
 $('#load-local').onclick = () => {
   try {

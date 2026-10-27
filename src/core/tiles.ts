@@ -201,6 +201,12 @@ function growthAverages(t: Tile): { wild: number; crop: number } {
  * Maximum sustainable yield of a tile under current technology. Logistic regrowth r·N·(1−N/K) + immigration
  * peaks at N = K/2, so MSY = K·(r/4 + immigration). A rough planning figure: ignores labour, tools and effort.
  */
+/**
+ * Share of the theoretical maximum yield people actually sustain: yields fall as stocks thin, and the lean
+ * season limits a camp more than the yearly average. Calibrated so camps that stay at this size stop starving.
+ */
+const HARVEST_EFFICIENCY = 0.7;
+
 export function tileCapacity(world: World, t: Tile): TileCapacity {
   const P = world.params;
   const g = growthAverages(t);
@@ -222,5 +228,5 @@ export function tileCapacity(world: World, t: Tile): TileCapacity {
   }
   // average consumer: mix of adults, children (0.6) and elders (0.8)
   const perHead = P.foodNeedAdult * 0.9;
-  return { wild, farmed, people: Math.max(wild, farmed) / perHead, agriculture };
+  return { wild, farmed, people: (Math.max(wild, farmed) * HARVEST_EFFICIENCY) / perHead, agriculture };
 }

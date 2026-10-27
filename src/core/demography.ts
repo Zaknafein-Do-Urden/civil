@@ -6,6 +6,7 @@ import { addBio, ageYears, createChild, personById } from './person';
 import { addEvent } from './events';
 import { isLand, siteScore, tilesWithin, hexDistance } from './map';
 import { has } from './tech';
+import { tileCapacity } from './tiles';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, OCC } from './types';
 import type { Person, Settlement, World } from './types';
@@ -258,9 +259,13 @@ export function maybeFission(world: World, rng: Rng, s: Settlement, people: Pers
     cap += t.plantsCap + t.gameCap;
   }
   const crowded = pop >= 50 && farmShare < 0.3 && wild < cap * 0.55;
-  if (!tooBig && !stressed && !crowded) return undefined;
-  if (!rng.chance(tooBig ? 0.5 : stressed ? 0.3 : 0.08)) return undefined;
-  const site = findSite(world, s.tile, 3, 7);
+  // more mouths than the home range can feed for long: the surplus leaves, and soon
+  let K = 0;
+  for (const id of s.territory) K += tileCapacity(world, world.map.tiles[id]).people;
+  const over = pop >= 20 && pop > K * 1.1;
+  if (!tooBig && !stressed && !crowded && !over) return undefined;
+  if (!rng.chance(over ? 0.9 : tooBig ? 0.5 : stressed ? 0.3 : 0.08)) return undefined;
+  const site = findSite(world, s.tile, 3, over ? 12 : 7);
   if (site < 0) return undefined;
 
   const adults = people.filter((p) => ageYears(world, p) >= 20 && p.role !== 'leader' && p.role !== 'council');
@@ -280,7 +285,7 @@ export function maybeFission(world: World, rng: Rng, s: Settlement, people: Pers
     }
   };
   addFamily(founder);
-  const share = rng.range(0.3, 0.45);
+  const share = over ? clamp((pop - K) / pop, 0.3, 0.5) : rng.range(0.3, 0.45);
   const order = rng.shuffle(people.filter((p) => ageYears(world, p) >= ADULT_AGE));
   for (const p of order) {
     if (leaving.size >= pop * share) break;
@@ -307,7 +312,7 @@ export function maybeFission(world: World, rng: Rng, s: Settlement, people: Pers
   founder.notable = true;
   addBio(world, founder, `率 ${leaving.size} 人离开${s.name}，建立新聚落${ns.name}`);
   addEvent(world, 'settlement', false, `新聚落：${ns.name}`,
-    `${founder.name} 带领 ${leaving.size} 人离开${s.name}（${tooBig ? '人口过多' : stressed ? '食物短缺' : '猎物和野果日渐稀少'}），建立了${ns.name}。`,
+    `${founder.name} 带领 ${leaving.size} 人离开${s.name}（${over ? '这片土地养不活这么多人' : tooBig ? '人口过多' : stressed ? '食物短缺' : '猎物和野果日渐稀少'}），建立了${ns.name}。`,
     [founder.id], ns.id);
   return ns;
 }
