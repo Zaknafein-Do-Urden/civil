@@ -94,6 +94,7 @@ function blank(world: World, rng: Rng, sex: 0 | 1, birth: number, settlement: nu
     reputation: 1,
     lowRepMonths: 0,
     outsider: false,
+    away: 0,
     food: 10,
     tools: 0,
     clothes: 0,

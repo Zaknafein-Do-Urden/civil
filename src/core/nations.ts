@@ -201,6 +201,8 @@ export function newScope(rng: Rng, id: number, culture: CultureSetting): PolityS
       capital: 0,
       treasury: { food: 0, tools: 0, clothes: 0 },
       legitimacy: 0.6,
+      imports: { copper: 0, tin: 0 },
+      metals: { copper: 1, tin: 1 },
       institutions: DIMS.map((d) => optIndex(d.id, culture[d.id] ?? BAND_DEFAULT[d.id])),
       active: DIMS.map((d) => d.id !== 'land'),
       dynasty: 1,

@@ -2,7 +2,7 @@
 // Motives come from individuals (hunger, land, ambition, revenge); decisions go through each
 // polity's own institutions (power-weighted, like reforms); reach is limited by distance.
 
-import { clamp, ln, sigmoid } from './dmath';
+import { clamp, exp, ln, sigmoid } from './dmath';
 import { AUTH, D, DIMS } from './rules';
 import { addBio, ageYears, personById } from './person';
 import { addEvent } from './events';
@@ -177,6 +177,7 @@ export function initRelations(world: World): void {
       if (relation(world, a, b)) continue;
       world.relations.push({
         a, b, status: 'none', since: world.day, opinion: 0, ties: 0, friction: 0, grudgeA: 0, grudgeB: 0, tributary: -1, truceUntil: 0,
+        trade: 0, tradeAcc: 0, marriages: 0, marriagesAcc: 0, migrants: 0, migrantsAcc: 0,
       });
     }
   }
@@ -254,7 +255,9 @@ function motives(world: World, x: Realm, rel: Relation, sx: number, sy: number):
     else treaty = world.day < rel.truceUntil ? -1.5 : -0.8;
   }
   const opinion = -1.5 * rel.opinion;
-  return { need, land, revenge, freedom, total: need + land + revenge + freedom + treaty + opinion + 0.8 * x.pol.warMood };
+  // war would cut the trade and the marriages across the border
+  const ties = -0.8 * rel.ties;
+  return { need, land, revenge, freedom, total: need + land + revenge + freedom + treaty + opinion + ties + 0.8 * x.pol.warMood };
 }
 
 /** One person's appetite for war on top of the polity's motives. */
@@ -266,10 +269,21 @@ function personalHawk(world: World, p: Person): number {
 
 const WAR_BASE = -1.5;
 
-function warSupport(world: World, x: Realm, m: Motives): number {
+/** Has a spouse, mother or child of the other people or living among them (DESIGN.md §12.9). */
+function kinAbroad(world: World, p: Person, y: number): boolean {
+  if (p.ethnicity === y) return true;
+  for (const id of [p.spouseId, p.motherId, ...p.childIds]) {
+    const k = personById(world, id);
+    if (k && (k.ethnicity === y || world.settlements[k.settlement].polity === y)) return true;
+  }
+  return false;
+}
+
+function warSupport(world: World, x: Realm, m: Motives, y: number): number {
   // warPropensity multiplies everyone's odds of favouring war
   const base = WAR_BASE + ln(Math.max(0.01, world.params.warPropensity));
-  return decide(world, x, (p) => sigmoid(base + m.total + personalHawk(world, p)));
+  const kin = world.params.kinPeace;
+  return decide(world, x, (p) => sigmoid(base + m.total + personalHawk(world, p) - (kin > 0 && kinAbroad(world, p, y) ? kin : 0)));
 }
 
 // --- yearly diplomacy ----------------------------------------------------
@@ -300,6 +314,11 @@ export function diplomacyYearly(world: World, rng: Rng): void {
 
   const declared = new Set<number>();
   for (const rel of world.relations) {
+    // last year's flows of goods and people (crossborder.ts)
+    rel.trade = rel.tradeAcc;
+    rel.marriages = rel.marriagesAcc;
+    rel.migrants = rel.migrantsAcc;
+    rel.tradeAcc = rel.marriagesAcc = rel.migrantsAcc = 0;
     const A = R[rel.a];
     const B = R[rel.b];
     if (!A || !B) continue;
@@ -314,13 +333,17 @@ export function diplomacyYearly(world: World, rng: Rng): void {
     const len = border[rel.a * n + rel.b] + border[rel.b * n + rel.a];
     rel.friction = clamp((len / 30) * (0.3 + A.pressure + B.pressure), 0, 1);
     if (rel.status === 'war') rel.ties *= 0.7;
-    else rel.ties = clamp(rel.ties + 0.015 * clamp(len / 10, 0.2, 1), 0, 1);
+    else {
+      const m = Math.max(20, Math.min(A.people.length, B.people.length));
+      const x = rel.trade / (m * 2) + (40 * rel.marriages) / m + (10 * rel.migrants) / m;
+      rel.ties = clamp(rel.ties + (1 - exp(-x) - rel.ties) * 0.3, 0, 1);
+    }
     rel.grudgeA *= 0.92;
     rel.grudgeB *= 0.92;
     const sim = similarity(means[rel.a], means[rel.b]);
     // border incidents: a hunting party killed on disputed ground starts a feud
     if (rel.status !== 'war' && rng.chance(rel.friction * 0.3)) borderIncident(world, rng, rel, A, B);
-    const target = (sim - 0.75) * 2 + 0.4 * rel.ties - 1.2 * rel.friction - (rel.grudgeA + rel.grudgeB) / 2 +
+    const target = (sim - 0.75) * 2 + 0.6 * rel.ties - 1.2 * rel.friction - (rel.grudgeA + rel.grudgeB) / 2 +
       (rel.status === 'alliance' ? 0.2 : 0);
     rel.opinion = clamp(rel.opinion + (target - rel.opinion) * 0.25, -1, 1);
 
@@ -347,7 +370,7 @@ export function diplomacyYearly(world: World, rng: Rng): void {
     for (const [X, Y] of [[A, B], [B, A]] as const) {
       if (declared.has(X.id) || dist > reach(X.id)) continue;
       const m = motives(world, X, rel, strengths[X.id], strengths[Y.id]);
-      const sup = warSupport(world, X, m);
+      const sup = warSupport(world, X, m, Y.id);
       if (sup > 0.5 && rng.chance(0.3)) {
         declared.add(X.id);
         declareWar(world, X, Y, rel, m, sup, R);
@@ -373,8 +396,8 @@ export function diplomacyYearly(world: World, rng: Rng): void {
     // exhaustion: years in the field and the dead
     ma.total -= years * 0.15 + (war.deaths[0] / Math.max(10, A.nMen)) * 3;
     mb.total -= years * 0.15 + (war.deaths[1] / Math.max(10, B.nMen)) * 3;
-    const sa = warSupport(world, A, ma);
-    const sb = warSupport(world, B, mb);
+    const sa = warSupport(world, A, ma, B.id);
+    const sb = warSupport(world, B, mb, A.id);
     const stale = war.actions === 0 && years >= 2;
     if (sa > 0.45 && sb > 0.45 && years < 15 && !stale) continue;
     // the side that wants peace more is the one suing for it
@@ -443,16 +466,22 @@ function payTribute(world: World, rel: Relation, R: (Realm | undefined)[]): void
   const lord = R[rel.tributary === rel.a ? rel.b : rel.a];
   if (!payer || !lord) return;
   const rate = world.params.tributeRate;
-  let paid = payer.pol.treasury.food * rate;
-  payer.pol.treasury.food -= paid;
-  for (const s of payer.settlements) {
-    const x = s.food * rate * s.enforcement;
-    s.food -= x;
-    paid += x;
+  // food, tools and clothes from the treasury and from every settlement's common stores the state reaches
+  const paid = { food: 0, tools: 0, clothes: 0 };
+  for (const g of ['food', 'tools', 'clothes'] as const) {
+    let x = payer.pol.treasury[g] * rate;
+    payer.pol.treasury[g] -= x;
+    for (const s of payer.settlements) {
+      const y = s[g] * rate * s.enforcement;
+      s[g] -= y;
+      x += y;
+    }
+    lord.pol.treasury[g] += x;
+    paid[g] = x;
   }
-  lord.pol.treasury.food += paid;
   addGrudge(rel, payer.id, 0.05);
-  addEvent(world, 'diplomacy', false, `贡赋：${payer.pol.name} → ${lord.pol.name}`, `${payer.pol.name}向${lord.pol.name}缴纳贡赋，食物 ${paid.toFixed(0)}。`);
+  addEvent(world, 'diplomacy', false, `贡赋：${payer.pol.name} → ${lord.pol.name}`,
+    `${payer.pol.name}向${lord.pol.name}缴纳贡赋：食物 ${paid.food.toFixed(0)}、工具 ${paid.tools.toFixed(1)}、衣物 ${paid.clothes.toFixed(1)}。`);
 }
 
 function declareWar(world: World, X: Realm, Y: Realm, rel: Relation, m: Motives, sup: number, R: (Realm | undefined)[]): void {
@@ -575,6 +604,10 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
   const deadD = def.men.filter(() => rng.chance(lossD));
   bury(world, me, deadA);
   bury(world, them, deadD);
+  // the fighters are away from their work, and some come home wounded
+  const days = P.campaignDays;
+  serve(world, rng, atk.men, raid ? days / 3 : days);
+  serve(world, rng, def.men, raid ? 3 : days / 2);
   war.deaths[side] += deadA.length;
   war.deaths[1 - side] += deadD.length;
   const rel = relation(world, me.id, them.id)!;
@@ -607,6 +640,15 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
   } else {
     addEvent(world, 'war', who, `战役：${target.name}之战`,
       `${me.pol.name}进攻${them.pol.name}的${target.name}，${win ? '虽占上风但未能攻下' : '被守军击退'}。${tally}。`, [], target.id);
+  }
+}
+
+/** Survivors of a fight: away from home for `days`, some wounded. */
+function serve(world: World, rng: Rng, men: Person[], days: number): void {
+  for (const p of men) {
+    if (!personById(world, p.id)) continue; // fell
+    p.away = Math.max(p.away, world.day + Math.round(days));
+    if (rng.chance(world.params.woundRate)) p.health = Math.max(0.05, p.health - rng.range(0.15, 0.4));
   }
 }
 
@@ -1045,7 +1087,7 @@ export function warOutlook(world: World): Outlook[] {
     if (!A || !B || rel.status === 'none') continue;
     for (const [X, Y] of [[A, B], [B, A]] as const) {
       const m = motives(world, X, rel, st[X.id], st[Y.id]);
-      out.push({ from: X.id, to: Y.id, support: warSupport(world, X, m), motives: m, strength: st[X.id], enemyStrength: st[Y.id] });
+      out.push({ from: X.id, to: Y.id, support: warSupport(world, X, m, Y.id), motives: m, strength: st[X.id], enemyStrength: st[Y.id] });
     }
   }
   return out;

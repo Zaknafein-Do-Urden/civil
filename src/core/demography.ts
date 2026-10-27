@@ -278,6 +278,7 @@ export function newSettlement(world: World, rng: Rng, tile: number): Settlement 
     epiDeaths: 0,
     epiName: '',
     immunity: 0,
+    importStone: 0,
   };
   world.settlements.push(s);
   claimTerritory(world, s);

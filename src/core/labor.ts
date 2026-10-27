@@ -93,7 +93,8 @@ export function decideHours(world: World, s: Settlement, people: Person[], yield
   const tax = taxRate(world, s);
   for (const p of people) {
     const wf = workFactor(ageDays(world, p));
-    if (p.occ < 0 || wf <= 0 || p.health < 0.2) {
+    // away on campaign: no work at home (war.ts)
+    if (p.occ < 0 || wf <= 0 || p.health < 0.2 || p.away > world.day) {
       p.hours = 0;
       continue;
     }
@@ -163,8 +164,8 @@ export function updateLabor(world: World, rng: Rng, s: Settlement, people: Perso
     p.effort = clamp(1 - 0.2 * p.grievance, 0.5, 1);
     const wf = workFactor(ageDays(world, p));
     const working = p.occ >= 0 && wf > 0;
-    if (!working || p.health < 0.5) {
-      // children, the old and the sick are excused
+    if (!working || p.health < 0.5 || p.away > world.day - DAYS_PER_MONTH) {
+      // children, the old, the sick and those away at war are excused
       p.reputation = p.reputation * 0.9 + 0.1;
     } else {
       // in a big group contributions blur into the average, and gossip adds noise
@@ -254,8 +255,7 @@ export function exclusion(world: World, rng: Rng, s: Settlement, people: Person[
       }
     }
     if (!dest) {
-      // nowhere to go: tolerated for now
-      for (const p of hh) p.lowRepMonths = 0;
+      // nowhere to go at home: tolerated, unless a neighbouring people takes them in (crossborder.ts)
       continue;
     }
     for (const p of hh) leave(p, dest, true);
@@ -285,5 +285,6 @@ export function migrateLabor(world: World): void {
     p.reputation ??= 1;
     p.lowRepMonths ??= 0;
     p.outsider ??= false;
+    p.away ??= 0;
   }
 }

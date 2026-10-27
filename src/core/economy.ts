@@ -54,12 +54,20 @@ export function aptitude(world: World, p: Person, occ: number): number {
   return Math.max(0.2, 1 + world.params.abilityWeight * a) * (1 + 0.6 * p.skills[occ]);
 }
 
+/** Gain from a metal: full with own mines or steady imports, half without any supply (DESIGN.md §12.9). */
+function metalGain(supply: number): number {
+  return 1 + 0.5 * (0.5 + 0.5 * supply);
+}
+
 export function toolDurability(world: World): number {
-  return (has(world, 'ground_stone') ? 1.5 : 1) * (has(world, 'bronze') ? 1.5 : 1);
+  const m = world.polity.metals;
+  return (has(world, 'ground_stone') ? 1.5 : 1) * (has(world, 'bronze') ? metalGain(Math.min(m.copper, m.tin)) : 1);
 }
 
 export function toolMultiplier(world: World, p: Person): number {
-  const bonus = world.params.toolBonus * (has(world, 'copper') ? 1.5 : 1) * (has(world, 'bronze') ? 1.5 : 1);
+  const m = world.polity.metals;
+  const bonus = world.params.toolBonus * (has(world, 'copper') ? metalGain(m.copper) : 1) *
+    (has(world, 'bronze') ? metalGain(Math.min(m.copper, m.tin)) : 1);
   return 1 + bonus * p.toolCond;
 }
 
@@ -160,10 +168,15 @@ function pastureFactor(world: World, s: Settlement): number {
   return Math.min(1, 0.4 + n * 0.2);
 }
 
-function stoneFactor(world: World, s: Settlement): number {
+export function bestStone(world: World, s: Settlement): number {
   let best = 0;
   for (const id of s.territory) best = Math.max(best, world.map.tiles[id].stone);
-  return 0.5 + best * 0.5;
+  return best;
+}
+
+function stoneFactor(world: World, s: Settlement): number {
+  // stone bought from a neighbour with a better quarry (crossborder.ts)
+  return 0.5 + Math.max(bestStone(world, s), s.importStone) * 0.5;
 }
 
 export function totalPlots(world: World, s: Settlement): number {
@@ -241,7 +254,7 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
     const p = people[i];
     p.hoursAcc += p.hours;
     // leisure: some of it goes into tinkering and curiosity, more so for the mathematically gifted
-    if (ageDays(world, p) >= ADULT_AGE * DAYS_PER_YEAR) {
+    if (ageDays(world, p) >= ADULT_AGE * DAYS_PER_YEAR && p.away <= world.day) {
       acc[OCC.tinker] += P.leisureResearch * ((P.maxHours - p.hours) / 8) * (p.math / 50) * (p.math / 50);
     }
     if (p.occ < 0 || p.hours <= 0) continue;

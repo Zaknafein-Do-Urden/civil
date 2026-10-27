@@ -72,6 +72,15 @@ export interface Params {
   secession: number;
   vassalThreshold: number;
   vassalTribute: number;
+  campaignDays: number;
+  woundRate: number;
+  // Cross-border trade, marriage and migration (DESIGN.md §12.9)
+  tradeRange: number;
+  tradeRate: number;
+  marriageRange: number;
+  intermarriage: number;
+  kinPeace: number;
+  emigration: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -137,6 +146,14 @@ export const DEFAULT_PARAMS: Params = {
   secession: 1,
   vassalThreshold: 0.2,
   vassalTribute: 0.15,
+  campaignDays: 30,
+  woundRate: 0.3,
+  tradeRange: 8,
+  tradeRate: 0.5,
+  marriageRange: 5,
+  intermarriage: 0.05,
+  kinPeace: 1,
+  emigration: 0.1,
 };
 
 export interface ParamDef {
@@ -210,5 +227,13 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'vassalThreshold', name: '附庸门槛', desc: '执行力低于「执行门槛」但不低于此值的聚落是附庸：自行其是，只交名义贡赋；再低就是化外之地', min: 0, max: 0.6, step: 0.05 },
   { key: 'vassalTribute', name: '附庸贡赋', desc: '附庸收上来的税中交给中央的比例', min: 0, max: 0.6, step: 0.05 },
   { key: 'secession', name: '分离倾向', desc: '管不到的聚落每年独立或投靠邻国的倾向倍数；0 表示从不分离', min: 0, max: 3, step: 0.1 },
-  { key: 'tributeRate', name: '贡赋比例', desc: '朝贡国每年缴纳的公库与存粮比例', min: 0, max: 0.5, step: 0.01 },
+  { key: 'campaignDays', name: '出征天数', desc: '一次战役中参战者离家不劳动的天数（劫掠为三分之一，守方迎战约一半）', min: 0, max: 90, step: 5 },
+  { key: 'woundRate', name: '负伤率', desc: '战斗中幸存的参战者负伤的比例；伤员健康下降 0.15～0.4，生产减少，健康过低不能再上阵', min: 0, max: 1, step: 0.05 },
+  { key: 'tradeRange', name: '贸易距离', desc: '两国聚落相距多少格以内可以在边境集市交易（实际贸易量还随交通科技折算后的距离衰减）', min: 0, max: 20, step: 1 },
+  { key: 'tradeRate', name: '贸易能力', desc: '相邻的两个聚落每月最多能交换的货值（食物当量）占较小一方人口的倍数；实际成交取决于双方的相对稀缺', min: 0, max: 3, step: 0.05 },
+  { key: 'marriageRange', name: '通婚距离', desc: '两国聚落相距多少格以内，单身男女可以跨国结婚', min: 0, max: 12, step: 1 },
+  { key: 'intermarriage', name: '通婚倾向', desc: '一位单身女子每月与邻国一位单身男子成婚的基础概率（和平关系、近距离、习俗相近时；接触 ×0.4，同盟 ×1.5）', min: 0, max: 0.2, step: 0.005 },
+  { key: 'kinPeace', name: '亲缘厌战', desc: '配偶、母亲或子女属于对方民族或住在对方国内的人，主战意愿（几率比的对数）降低多少', min: 0, max: 3, step: 0.1 },
+  { key: 'emigration', name: '跨国逃荒', desc: '连续缺粮两个月以上的聚落里，每户每月投奔邻国不缺粮聚落的概率', min: 0, max: 0.5, step: 0.01 },
+  { key: 'tributeRate', name: '贡赋比例', desc: '朝贡国每年缴纳的公库与公共储备（食物、工具、衣物）比例', min: 0, max: 0.5, step: 0.01 },
 ];
