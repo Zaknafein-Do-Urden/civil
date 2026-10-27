@@ -11,7 +11,7 @@ import { addBio, ageYears, createFounder, personById, surnameOf } from './person
 import { addEvent } from './events';
 import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles } from './economy';
 import { exclusion, migrateLabor, updateLabor } from './labor';
-import { abandonEmpty, assignGuardian, dailyDemography, marriages, maybeFission, migrate, newSettlement } from './demography';
+import { abandonEmpty, assignGuardian, claimTerritory, dailyDemography, marriages, rangeBudget, maybeFission, migrate, newSettlement } from './demography';
 import {
   appointAdmins, chooseCouncil, chooseLeader, corruption, ensureLeader, institutionalChange, maybeElection, payAdmins,
   plannerMath, startMovement, unrest, updateActive, updateEnforcement, updateLegitimacy, updateMood, updatePracticed,
@@ -344,6 +344,7 @@ function breakthroughs(world: World, rng: Rng, available: number[]): void {
 
 function yearly(world: World, rng: Rng): void {
   const groups = groupBySettlement(world);
+  for (const s of world.settlements) if (s.alive) claimTerritory(world, s, rangeBudget(world, groups[s.id]));
   updateActive(world);
   updateEnforcement(world);
   updatePracticed(world, groups);

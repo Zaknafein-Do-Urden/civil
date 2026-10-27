@@ -114,7 +114,7 @@ function readNpcs(): { npcCount: number; npcPopulation: number } {
 function updateBandHint(): void {
   const pop = readPopulation();
   const risk = pop < 30 ? '人数这么少，开局按几户人家生成；一两次意外死亡或连续生男/生女都可能让部落绝嗣，灭绝风险很高。' : '';
-  $('#band-hint').textContent = `${pop} 人一开始都住在出生地的同一个营地，靠周围 19 格土地采集狩猎（一格约能养活 5–10 人）。` +
+  $('#band-hint').textContent = `${pop} 人一开始都住在出生地的同一个营地，靠周围一天能走个来回的土地采集狩猎（平原上约 19 格，一格约能养活 5–10 人）。` +
     `人多到这片土地养不活、或猎物野果被吃薄时，会有人带着家人出去另建营地。${risk}`;
 }
 

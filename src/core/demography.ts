@@ -4,7 +4,7 @@ import { clamp, pow } from './dmath';
 import { D, INH } from './rules';
 import { addBio, ageYears, createChild, personById } from './person';
 import { addEvent } from './events';
-import { isLand, siteScore, tilesWithin, hexDistance } from './map';
+import { isLand, moveCost, neighbors, siteScore, tilesWithin, hexDistance } from './map';
 import { has } from './tech';
 import { tileCapacity } from './tiles';
 import type { Rng } from './rng';
@@ -175,15 +175,56 @@ export function marriages(world: World, rng: Rng, people: Person[]): void {
 
 // --- settlements -------------------------------------------------------
 
-export function claimTerritory(world: World, s: Settlement): void {
-  const center = world.map.tiles[s.tile];
-  s.territory = [];
-  for (const t of tilesWithin(world.map, center, 2)) {
-    if (t.terrain === 'ocean') continue;
-    if (t.owner >= 0 && t.owner !== s.id) continue;
-    t.owner = s.id;
-    s.territory.push(t.id);
+/** Daily foraging wades across rivers and fishes lakes, so it moves like travel with boats. */
+const FORAGE_TECH = { boats: true, wheel: false, sailing: false };
+
+/**
+ * How far members range from home each day, in travel cost (one plains tile = 1), by how the settlement
+ * feeds itself: foragers walk about 10 km, farmers about 5 km to their fields, herders follow pasture.
+ */
+export function rangeBudget(world: World, people: Person[]): number {
+  const P = world.params;
+  let wild = 0;
+  let farm = 0;
+  let herd = 0;
+  for (const p of people) {
+    if (p.occ === OCC.farm) farm++;
+    else if (p.occ === OCC.herd) herd++;
+    else if (p.occ === OCC.gather || p.occ === OCC.hunt || p.occ === OCC.fish) wild++;
   }
+  const n = wild + farm + herd;
+  return n ? (wild * P.forageRange + farm * P.farmRange + herd * P.herdRange) / n : P.forageRange;
+}
+
+/**
+ * Territory = unclaimed (or own) tiles reachable from the centre within the daily range, by terrain travel
+ * cost: hills, forests and rivers shrink it, open plains widen it. Cleared farmland is kept even when the
+ * range shrinks; tiles no longer used are released for others.
+ */
+export function claimTerritory(world: World, s: Settlement, budget = world.params.forageRange): void {
+  const map = world.map;
+  const center = map.tiles[s.tile];
+  const cost = new Map<number, number>([[center.id, 0]]);
+  const done = new Set<number>();
+  const reached: number[] = [];
+  for (;;) {
+    let id = -1;
+    let best = Infinity;
+    for (const [k, c] of cost) if (!done.has(k) && (c < best || (c === best && k < id))) [id, best] = [k, c];
+    if (id < 0) break;
+    done.add(id);
+    reached.push(id);
+    for (const nb of neighbors(map, map.tiles[id])) {
+      if (done.has(nb.id) || (nb.owner >= 0 && nb.owner !== s.id)) continue;
+      const c = best + moveCost(nb, FORAGE_TECH);
+      if (c <= budget && c < (cost.get(nb.id) ?? Infinity)) cost.set(nb.id, c);
+    }
+  }
+  const keep = new Set(reached);
+  for (const id of s.territory) if (map.tiles[id].plots > 0 && map.tiles[id].owner === s.id) keep.add(id);
+  for (const id of s.territory) if (!keep.has(id) && map.tiles[id].owner === s.id) map.tiles[id].owner = -1;
+  s.territory = [...keep];
+  for (const id of s.territory) map.tiles[id].owner = s.id;
 }
 
 export function newSettlement(world: World, rng: Rng, tile: number): Settlement {
@@ -230,7 +271,7 @@ export function findSite(world: World, originTile: number, minD: number, maxD: n
     // a viable home range needs enough unclaimed land around it
     let free = 0;
     for (const n of tilesWithin(world.map, t, 2)) if (isLand(n) && n.owner < 0) free++;
-    if (free < 12) continue;
+    if (free < (farming ? 5 : 12)) continue;
     const score = siteScore(world.map, t, farming) - d * 0.5;
     if (score > bestScore || (score === bestScore && best >= 0 && t.id < best)) {
       bestScore = score;

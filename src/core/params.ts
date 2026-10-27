@@ -27,6 +27,10 @@ export interface Params {
   leisureResearch: number;
   // Reputation, monitoring and exclusion
   dunbar: number;
+  // Territory
+  forageRange: number;
+  farmRange: number;
+  herdRange: number;
   reciprocity: number;
   punishment: number;
   exileRep: number;
@@ -87,6 +91,9 @@ export const DEFAULT_PARAMS: Params = {
   leisureJoy: 0.2,
   leisureResearch: 0.03,
   dunbar: 150,
+  forageRange: 2.5,
+  farmRange: 1.2,
+  herdRange: 3.5,
   reciprocity: 0.6,
   punishment: 0.8,
   exileRep: 0.45,
@@ -151,6 +158,9 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'leisureJoy', name: '闲暇幸福', desc: '闲暇占可用时间的比例对幸福感的影响', min: 0, max: 1, step: 0.05 },
   { key: 'leisureResearch', name: '闲暇研究', desc: '闲暇中捣鼓的一小时相当于专职研究一小时的比例（再乘以数学能力）', min: 0, max: 0.2, step: 0.005 },
   { key: 'dunbar', name: '邓巴数', desc: '观察贡献的准确度在群体达到这个规模时降到一半（准确度 = 1/(1+(人数/邓巴数)²)）', min: 50, max: 400, step: 10 },
+  { key: 'forageRange', name: '采猎活动范围', desc: '采集狩猎者每天离营地能走多远（通行成本，平原一格 = 1）；领地是这个范围内的地块', min: 1, max: 5, step: 0.1 },
+  { key: 'farmRange', name: '农耕活动范围', desc: '农民每天往返田地的范围（通行成本）；农业村落的领地比采猎营地小', min: 0.5, max: 3, step: 0.1 },
+  { key: 'herdRange', name: '放牧活动范围', desc: '牧民追逐草场的范围（通行成本）', min: 1, max: 6, step: 0.1 },
   { key: 'reciprocity', name: '条件互惠', desc: '公有聚落按声誉分配的强度：声誉低的人从公共储备分到的更少，也因此更愿意干活', min: 0, max: 1, step: 0.05 },
   { key: 'punishment', name: '官吏惩罚', desc: '统筹体制下官吏监督到的偷懒会受罚的强度（乘以官吏覆盖率）', min: 0, max: 1.5, step: 0.05 },
   { key: 'exileRep', name: '排挤门槛', desc: '声誉长期低于此值的人会被排挤出公有聚落', min: 0, max: 1, step: 0.05 },
