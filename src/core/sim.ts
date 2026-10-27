@@ -26,6 +26,7 @@ import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
 import type { Command, Person, World } from './types';
 import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName, takenNames } from './nations';
 import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
+import { crossBorderMonthly } from './crossborder';
 
 export interface WorldConfig {
   seed: string;
@@ -246,6 +247,7 @@ export function step(world: World): void {
   }
   if (world.day % DAYS_PER_MONTH === 0) {
     forEachPolity(world, (v) => monthly(v, rng, groupBySettlement(v)));
+    crossBorderMonthly(world, rng);
     warMonthly(world, rng);
     diseaseMonthly(world, rng);
   }
@@ -418,6 +420,15 @@ export function deserialize(json: string): World {
     s.governor ??= -1;
     if (s.chief === undefined) Object.assign(s, { chief: -1, skimAcc: 0, skimmed: 0 });
     if (s.epidemic === undefined) Object.assign(s, { epidemic: 0, epiSeverity: 0, epiDeaths: 0, epiName: '', immunity: 0 });
+    s.importStone ??= 0;
+  }
+  // saves from before cross-border trade and marriage
+  for (const sc of [w, ...w.npcs]) {
+    sc.polity.imports ??= { copper: 0, tin: 0 };
+    sc.polity.metals ??= { copper: 1, tin: 1 };
+  }
+  for (const r of w.relations) {
+    if (r.trade === undefined) Object.assign(r, { trade: 0, tradeAcc: 0, marriages: 0, marriagesAcc: 0, migrants: 0, migrantsAcc: 0 });
   }
   for (const p of w.people) p.ethnicity ??= w.settlements[p.settlement].origin;
   w.tileHistory ??= emptyTileHistory(); // saves from before tile history

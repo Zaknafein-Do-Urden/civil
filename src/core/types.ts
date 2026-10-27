@@ -117,6 +117,8 @@ export interface Person {
   lowRepMonths: number;
   /** Newcomer who has not yet earned a standing in this settlement. */
   outsider: boolean;
+  /** Away on campaign until this day: does no work at home (war.ts). */
+  away: number;
   // Inventory
   food: number;
   tools: number;
@@ -189,6 +191,8 @@ export interface Settlement {
   epiName: string;
   /** Share of the people immune from the last epidemic, 0..1; fades as new generations are born. */
   immunity: number;
+  /** Quality of stone bought from foreign neighbours, 0..1; fades monthly (crossborder.ts). */
+  importStone: number;
 }
 
 export interface Polity {
@@ -206,6 +210,10 @@ export interface Polity {
   capital: number;
   treasury: { food: number; tools: number; clothes: number };
   legitimacy: number;
+  /** Supply index of ore bought abroad, 0..1 (crossborder.ts). */
+  imports: { copper: number; tin: number };
+  /** Metal supply, own mines (1) or imports, 0..1: scales the copper and bronze tool bonus. */
+  metals: { copper: number; tin: number };
   /** Current national institution: option index per dimension. */
   institutions: number[];
   /** Dimensions that have become relevant. */
@@ -330,8 +338,15 @@ export interface Relation {
   since: number;
   /** -1..1 */
   opinion: number;
-  /** Accumulated trade and intermarriage, 0..1. */
+  /** Ties from real flows of goods and people, 0..1 (crossborder.ts). */
   ties: number;
+  /** Last year's bilateral trade (food value, both ways), marriages and migrants; and this year's so far. */
+  trade: number;
+  tradeAcc: number;
+  marriages: number;
+  marriagesAcc: number;
+  migrants: number;
+  migrantsAcc: number;
   /** Last computed border friction, 0..1 (for display). */
   friction: number;
   /** Grudge of a against b, and of b against a. */

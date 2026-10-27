@@ -86,8 +86,10 @@ export const diplomacy: Tab = {
       const mine = r.a === p.id ? r.grudgeA : r.grudgeB;
       const o = outlook.find((x) => x.from === p.id && x.to === other);
       const trib = r.status === 'tribute' ? (r.tributary === p.id ? '（我方纳贡）' : '（对方纳贡）') : '';
+      const flow = r.status === 'none' ? '<td>—</td><td>—</td>' :
+        `<td title="今年至今 ${r.tradeAcc.toFixed(0)}">${r.trade.toFixed(0)}</td><td title="今年至今：通婚 ${r.marriagesAcc}，移民 ${r.migrantsAcc}">${r.marriages} / ${r.migrants}</td>`;
       return `<tr><td>${pname(w, other)}</td><td>${STATUS_NAMES[r.status]}${trib}</td>
-        <td>${r.status === 'none' ? '—' : r.opinion.toFixed(2)}</td><td>${r.status === 'none' ? '—' : r.ties.toFixed(2)}</td>
+        <td>${r.status === 'none' ? '—' : r.opinion.toFixed(2)}</td>${flow}<td>${r.status === 'none' ? '—' : r.ties.toFixed(2)}</td>
         <td>${r.status === 'none' ? '—' : r.friction.toFixed(2)}</td><td>${mine.toFixed(2)}</td><td>${o ? pct(o.support) : '—'}</td></tr>`;
     }).join('');
     const me = outlook.find((o) => o.from === p.id);
@@ -99,13 +101,14 @@ export const diplomacy: Tab = {
         <div class="kpi"><div class="k">已知科技</div><div class="v">${sc.tech.known.filter(Boolean).length}</div></div>
         <div class="kpi"><div class="k">军力</div><div class="v">${me ? me.strength.toFixed(0) : '—'}</div></div>
         <div class="kpi"><div class="k">战争思潮</div><div class="v">${p.warMood.toFixed(2)}</div></div>
+        <div class="kpi"><div class="k">铜 / 锡供应</div><div class="v small">${metal(p.metals.copper, p.imports.copper)} / ${metal(p.metals.tin, p.imports.tin)}</div></div>
       </div>
       ${last ? `<div class="small muted">去年：出生 ${last.births}，死亡 ${last.deaths}，饿死冻死 ${last.starved}；人均产粮 ${last.foodPerCap.toFixed(2)}；基尼 ${last.gini.toFixed(2)}</div>` : ''}
       <div class="small" style="margin:6px 0">${DIMS.map((d, i) => `${d.name}：<b>${esc(optName(d.id, p.institutions[i]))}</b>`).join('　')}</div>
       ${p.alive ? `<button data-tab="overview" data-focus="${p.id}">在其他页面查看${p.id === PLAYER ? '本部落' : '此政体'}（概览、制度、人物、科技、诊断）</button>` : ''}
       <h4>与各国关系</h4>
-      <table class="list"><tr><th>对方</th><th>状态</th><th>好感</th><th>往来</th><th>边界摩擦</th><th>积怨</th><th>主战度</th></tr>${rels}</table>
-      <p class="muted small">好感由文化相似度、往来（贸易与通婚）、边界摩擦和积怨决定；主战度是本国按权力加权的开战意愿，超过 50% 就可能宣战。</p>`;
+      <table class="list"><tr><th>对方</th><th>状态</th><th>好感</th><th>贸易额/年</th><th>通婚 / 移民</th><th>往来</th><th>边界摩擦</th><th>积怨</th><th>主战度</th></tr>${rels}</table>
+      <p class="muted small">贸易额是去年边境集市上双向成交的货值（食物当量），通婚与移民是去年跨国嫁娶和投奔的人数（鼠标悬停看今年至今）。往来由这些真实的流动决定；好感由文化相似度、往来、边界摩擦和积怨决定；主战度是本国按权力加权的开战意愿，超过 50% 就可能宣战。</p>`;
 
     const wars = [...w.wars].reverse().slice(0, 30).map((x) => {
       const yrs = ((x.end < 0 ? w.day : x.end) - x.start) / 360;
@@ -117,6 +120,11 @@ export const diplomacy: Tab = {
     el.querySelector('#dip-wars')!.innerHTML = wars || '<p class="muted">尚无战争</p>';
   },
 };
+
+function metal(supply: number, imported: number): string {
+  if (supply >= 1) return '自产';
+  return imported > 0.01 ? `进口 ${pct(imported)}` : '无';
+}
 
 export function focusBanner(ui: Ui): string {
   if (ui.focus === PLAYER) return '';

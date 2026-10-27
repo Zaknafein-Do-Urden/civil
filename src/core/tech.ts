@@ -101,6 +101,10 @@ export function envFlags(world: World): Record<EnvKey, boolean> {
       if (t.fishCap > 0) f.water = true;
     }
   }
+  // ore bought from neighbours counts once the supply is steady (crossborder.ts)
+  const im = world.polity.imports;
+  if (im.copper >= 0.3) f.copper = true;
+  if (im.tin >= 0.3) f.tin = true;
   return f;
 }
 
