@@ -20,7 +20,7 @@ export const PLAYER = 0;
 /** Band-society customs used where a culture leaves a dimension unspecified. */
 const BAND_DEFAULT: Record<string, string> = {
   allocation: 'sharing', land: 'common', occupation: 'free', distribution: 'need', tax: 'none',
-  authority: 'assembly', succession: 'prestige', inheritance: 'equal', speech: 'free',
+  authority: 'assembly', succession: 'prestige', inheritance: 'equal', speech: 'free', suffrage: 'all', checks: 'none',
 };
 
 export const emptyAcc = () => ({ foodProduced: 0, foodDecayed: 0, coldSum: 0, hungerDays: 0, personDays: 0 });
@@ -206,6 +206,9 @@ export function newScope(rng: Rng, id: number, culture: CultureSetting): PolityS
       institutions: DIMS.map((d) => optIndex(d.id, culture[d.id] ?? BAND_DEFAULT[d.id])),
       active: DIMS.map((d) => d.id !== 'land'),
       dynasty: 1,
+      factions: [],
+      factionSeq: 0,
+      vetoed: DIMS.map(() => -1),
     },
     culture,
     tech: initTech(rng),

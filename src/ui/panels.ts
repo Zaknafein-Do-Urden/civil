@@ -9,6 +9,7 @@ import type { Domain } from '../core/tech';
 import { foodNeed, wealth } from '../core/economy';
 import { diagnose } from '../core/stats';
 import { popularSupport, weightedSupport } from '../core/politics';
+import { checkingBody, leaderBacking, platformText } from '../core/factions';
 import { formatDate } from '../core/events';
 import { TERRAIN_NAMES, isLand, travelCosts } from '../core/map';
 import { decodeTileSnapshot, tileCapacity } from '../core/tiles';
@@ -159,6 +160,8 @@ const institutions: Tab = {
   mount(el, ui) {
     el.innerHTML = `<p class="muted small">黄色为现行制度。每个选项两条支持度：<b>上</b>＝按权力加权（决定改革），<b>下</b>＝全体成年人（决定民心与革命）。</p>
       <div id="inst-list"></div>
+      <h3 data-wiki="factions">派系</h3><div id="inst-factions"></div>
+      <h3 data-wiki="mobility">社会流动</h3><div id="inst-mobility"></div><canvas class="chart" id="ch-mobility"></canvas>
       <h3>各聚落执行情况</h3><div id="inst-settlements"></div>
       <div id="mv-box"><h3>推动思潮</h3>
       <p class="muted small">让一部分理想主义者开始鼓吹某个选项。其他人会按各自利益决定支持还是反对，结果可能是改革、被否决或引发革命。</p>
@@ -196,6 +199,28 @@ const institutions: Tab = {
           ${mini(ps[di][oi], '#8d98a8')}</div>`).join('')}
       </div>`;
     }).join('');
+    const fs = w.polity.factions;
+    const unaffiliated = w.people.filter((p) => p.faction < 0 && ageYears(w, p) >= 16).length;
+    const hasVotes = fs.some((f) => f.votes > 0);
+    const ruling = personById(w, w.polity.leaderId)?.faction ?? -1;
+    el.querySelector('#inst-factions')!.innerHTML = fs.length
+      ? `<table class="list"><tr><th>派系</th><th>领袖</th><th>成员</th><th>实力</th>${hasVotes ? '<th>得票</th>' : ''}<th>主张</th></tr>${fs.map((f) => `<tr><td>${esc(f.name)}${f.id === ruling ? ' ★' : ''}<div class="muted small">${esc(f.basis)} · ${formatDate(f.founded)}起</div></td><td>${personLink(w, f.leaderId)}</td><td>${f.size}</td><td>${pct(f.power)}</td>${hasVotes ? `<td>${pct(f.votes)}</td>` : ''}<td class="small">${esc(platformText(w, f))}</td></tr>`).join('')}</table>
+        <p class="muted small">★ 首领所在派系。实力＝成员在权力加权中所占份额；${unaffiliated} 名成年人不属于任何派系。${checkText(w)}</p>`
+      : '<p class="muted small">还没有成形的派系：成年人太少，或者人们的主张和身份差别不大。</p>';
+    const last = w.stats[w.stats.length - 1];
+    const known = (x: number | undefined) => (x === undefined || x < 0 ? '—' : pct(x));
+    el.querySelector('#inst-mobility')!.innerHTML = `<div class="kpis">
+      <div class="kpi"><div class="k">代际阶层相关</div><div class="v">${last && last.mobility !== undefined && last.mobility >= 0 ? last.mobility.toFixed(2) : '—'}</div></div>
+      <div class="kpi"><div class="k">子承父业</div><div class="v">${known(last?.occInherit)}</div></div>
+      <div class="kpi"><div class="k">底层出身升入上层</div><div class="v">${known(last?.upward)}</div></div>
+      <div class="kpi"><div class="k">世家贵族</div><div class="v">${pct(w.people.filter((p) => p.noble).length / Math.max(1, w.people.length))}</div></div>
+    </div><p class="muted small">30–55 岁成年人现在的地位（财富与官职在成年人中的排位）与其成长时家庭地位的相关系数：0 表示出身无关，1 表示完全由出身决定。开局一代的出身未知，约 15 年后才有数据。</p>`;
+    const ms = w.stats.filter((x) => x.mobility !== undefined && x.mobility >= 0);
+    drawChart(el.querySelector('#ch-mobility')!, ms.map((x) => x.year), [
+      { name: '代际阶层相关', color: '#ff8a65', values: ms.map((x) => x.mobility) },
+      { name: '子承父业', color: '#8d98a8', values: ms.map((x) => Math.max(0, x.occInherit)) },
+      { name: '底层上升', color: '#5cd18b', values: ms.map((x) => Math.max(0, x.upward)) },
+    ], { min: 0, max: 1 });
     const rows = w.settlements.filter((s) => s.alive).map((s) => {
       const diff = DIMS.map((d, di) => (s.practiced[di] !== w.polity.institutions[di] ? `${d.name}:${optName(d.id, s.practiced[di])}` : '')).filter(Boolean);
       return `<tr class="click" data-settlement="${s.id}"><td><span style="color:${settlementColor(s.id)}">●</span> ${esc(s.name)}${s.id === w.polity.capital ? ' ★' : ''}</td><td>${s.pop}</td><td>${s.distance.toFixed(1)}</td><td>${pct(s.enforcement)}</td><td class="small">${diff.length ? esc(diff.join('，')) : '<span class="muted">与国家一致</span>'}</td></tr>`;
@@ -203,6 +228,13 @@ const institutions: Tab = {
     el.querySelector('#inst-settlements')!.innerHTML = `<table class="list"><tr><th>聚落</th><th>人口</th><th>距首都</th><th>执行力</th><th>本地实际做法</th></tr>${rows.join('')}</table>`;
   },
 };
+
+/** Who can veto reforms and remove the leader, and how much of that body the leader's faction holds. */
+function checkText(w: World): string {
+  const body = checkingBody(w);
+  if (!body) return '没有制衡：首领的决定无人能否决，罢免只能靠政变。';
+  return `改革须经${body.name}多数同意；首领派系在${body.name}中占 ${pct(leaderBacking(w, body.members))}，合法性跌破 40% 且不占多数时可能被罢免。`;
+}
 
 // --- settlement ----------------------------------------------------------
 
@@ -462,6 +494,7 @@ function personDetail(w: World, p: Person): string {
     return `<div class="small">${d.name}：<b>${esc(optName(d.id, top))}</b> <span class="muted">${pct(p.prefs[di][top])}</span>${top === cur ? '' : ' <span style="color:var(--warn)">≠现行</span>'}</div>`;
   }).join('');
   const role = roleName(p);
+  const faction = w.polity.factions.find((f) => f.id === p.faction);
   return `<div class="person-head"><h3>${esc(p.name)} <span class="muted small">${p.sex ? '男' : '女'} · ${age}岁${role ? ' · ' + role : ''}</span></h3><a class="link" data-person="-1">返回</a></div>
     <div class="muted small">民族：${esc(polityOf(w, p.ethnicity).name)} · 居于${settlementLink(w, p.settlement)} · ${p.occ >= 0 ? OCC_NAMES[p.occ] : age < 16 ? '儿童' : '不再劳动'} · 威望 ${p.prestige.toFixed(2)}</div>
     <div class="grid2">
@@ -478,7 +511,9 @@ function personDetail(w: World, p: Person): string {
     <h4>家庭</h4>
     <div class="small">配偶：${p.spouseId >= 0 ? personLink(w, p.spouseId) : '无'} · 父：${p.fatherId >= 0 ? personLink(w, p.fatherId) : '—'} · 母：${p.motherId >= 0 ? personLink(w, p.motherId) : '—'}</div>
     <div class="small">子女：${kids}</div>
-    <h4>政治倾向（最认同的选项）</h4>${prefs}
+    <h4>政治倾向（最认同的选项）</h4>
+    <div class="small" data-wiki="factions">派系：${faction ? `<b>${esc(faction.name)}</b>${faction.leaderId === p.id ? '（领袖）' : ''}` : '无'}${p.noble ? ' · 世家贵族' : ''} · 社会地位排位 ${pct(p.rank)}${p.originRank >= 0 ? `（出身家庭 ${pct(p.originRank)}）` : ''}</div>
+    ${prefs}
     <h4>生平</h4><div class="bio">${p.bio.length ? p.bio.map((b) => `<div><span class="muted">${formatDate(b.day)}</span> ${esc(b.text)}</div>`).join('') : '<span class="muted">平凡度日</span>'}</div>`;
 }
 

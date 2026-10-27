@@ -10,7 +10,9 @@ export type DimId =
   | 'authority'
   | 'succession'
   | 'inheritance'
-  | 'speech';
+  | 'speech'
+  | 'suffrage'
+  | 'checks';
 
 export interface DimDef {
   id: DimId;
@@ -105,6 +107,26 @@ export const DIMS: DimDef[] = [
       { id: 'controlled', name: '管控', desc: '信息失真，舆论被引导，不满被压抑' },
     ],
   },
+  {
+    id: 'suffrage', name: '投票权', group: '政治权力',
+    desc: '谁的声音算数：表决、选举和改革中计入哪些人（有议事会、大会或选举时激活）',
+    options: [
+      { id: 'all', name: '全体成年人', desc: '每个成年人都有一票' },
+      { id: 'men', name: '仅男性', desc: '只有成年男子有投票权' },
+      { id: 'property', name: '有产者', desc: '财富不低于成年人中位数的人' },
+      { id: 'ethnic', name: '统治民族', desc: '只有与首领同一民族的人' },
+      { id: 'noble', name: '世家贵族', desc: '担任过首领、长老、镇守、头人的人及其子孙' },
+    ],
+  },
+  {
+    id: 'checks', name: '权力制衡', group: '政治权力',
+    desc: '首领的决定能否被否决、首领能否被和平罢免',
+    options: [
+      { id: 'none', name: '无制衡', desc: '首领一人说了算；没有和平罢免的途径，不满只能靠政变' },
+      { id: 'council', name: '议事会否决', desc: '改革需议事会多数同意；首领失去民心时议事会可罢免' },
+      { id: 'assembly', name: '大会复决', desc: '改革需有投票权者过半数同意；首领失去民心时可被大会罢免' },
+    ],
+  },
 ];
 
 export const DIM_IDS: DimId[] = DIMS.map((d) => d.id);
@@ -112,6 +134,7 @@ export const DIM_IDS: DimId[] = DIMS.map((d) => d.id);
 // Index constants for hot simulation code. Must match DIMS order above.
 export const D = {
   allocation: 0, land: 1, occupation: 2, distribution: 3, tax: 4, authority: 5, succession: 6, inheritance: 7, speech: 8,
+  suffrage: 9, checks: 10,
 } as const;
 export const ALLOC = { sharing: 0, exchange: 1, command: 2 } as const;
 export const LAND = { common: 0, private: 1, chief: 2 } as const;
@@ -122,6 +145,8 @@ export const AUTH = { chief: 0, council: 1, assembly: 2 } as const;
 export const SUCC = { prestige: 0, election: 1, hereditary: 2, seizure: 3, exam: 4 } as const;
 export const INH = { equal: 0, primogeniture: 1, collective: 2 } as const;
 export const SPEECH = { free: 0, limited: 1, controlled: 2 } as const;
+export const SUFFRAGE = { all: 0, men: 1, property: 2, ethnic: 3, noble: 4 } as const;
+export const CHECKS = { none: 0, council: 1, assembly: 2 } as const;
 
 export const DIM_INDEX = Object.fromEntries(DIMS.map((d, i) => [d.id, i])) as Record<DimId, number>;
 
@@ -142,33 +167,33 @@ export type CultureSetting = Record<DimId, string | null>;
 
 export const UNSPECIFIED: CultureSetting = {
   allocation: null, land: null, occupation: null, distribution: null, tax: null,
-  authority: null, succession: null, inheritance: null, speech: null,
+  authority: null, succession: null, inheritance: null, speech: null, suffrage: null, checks: null,
 };
 
 export const PRESETS: { id: string; name: string; desc: string; culture: CultureSetting }[] = [
   { id: 'none', name: '全部不指定', desc: '完全由小人按自身利益演化', culture: UNSPECIFIED },
   {
     id: 'primitive', name: '原始共产制', desc: '共享、公有、全体大会',
-    culture: { allocation: 'sharing', land: 'common', occupation: 'free', distribution: 'need', tax: 'none', authority: 'assembly', succession: 'prestige', inheritance: 'collective', speech: 'free' },
+    culture: { allocation: 'sharing', land: 'common', occupation: 'free', distribution: 'need', tax: 'none', authority: 'assembly', succession: 'prestige', inheritance: 'collective', speech: 'free', suffrage: 'all', checks: 'assembly' },
   },
   {
     id: 'chiefdom', name: '部落酋长制', desc: '共享为主，酋长世袭，按地位分配',
-    culture: { allocation: 'sharing', land: 'chief', occupation: 'free', distribution: 'rank', tax: 'light', authority: 'chief', succession: 'hereditary', inheritance: 'primogeniture', speech: 'limited' },
+    culture: { allocation: 'sharing', land: 'chief', occupation: 'free', distribution: 'rank', tax: 'light', authority: 'chief', succession: 'hereditary', inheritance: 'primogeniture', speech: 'limited', suffrage: 'noble', checks: 'none' },
   },
   {
     id: 'feudal', name: '封建君主制', desc: '土地归君主，世袭职业，重税',
-    culture: { allocation: 'exchange', land: 'chief', occupation: 'hereditary', distribution: 'rank', tax: 'heavy', authority: 'chief', succession: 'hereditary', inheritance: 'primogeniture', speech: 'controlled' },
+    culture: { allocation: 'exchange', land: 'chief', occupation: 'hereditary', distribution: 'rank', tax: 'heavy', authority: 'chief', succession: 'hereditary', inheritance: 'primogeniture', speech: 'controlled', suffrage: 'noble', checks: 'council' },
   },
   {
     id: 'liberal', name: '自由市场民主', desc: '私有、自由交换、选举',
-    culture: { allocation: 'exchange', land: 'private', occupation: 'free', distribution: 'labor', tax: 'light', authority: 'assembly', succession: 'election', inheritance: 'equal', speech: 'free' },
+    culture: { allocation: 'exchange', land: 'private', occupation: 'free', distribution: 'labor', tax: 'light', authority: 'assembly', succession: 'election', inheritance: 'equal', speech: 'free', suffrage: 'all', checks: 'assembly' },
   },
   {
     id: 'planned', name: '中央计划一党制', desc: '统筹、指派、议事会、信息管控',
-    culture: { allocation: 'command', land: 'common', occupation: 'assigned', distribution: 'labor', tax: 'heavy', authority: 'council', succession: 'exam', inheritance: 'collective', speech: 'controlled' },
+    culture: { allocation: 'command', land: 'common', occupation: 'assigned', distribution: 'labor', tax: 'heavy', authority: 'council', succession: 'exam', inheritance: 'collective', speech: 'controlled', suffrage: 'all', checks: 'none' },
   },
   {
     id: 'nordic', name: '北欧式混合', desc: '私有与交换，重税再分配，选举',
-    culture: { allocation: 'exchange', land: 'private', occupation: 'free', distribution: 'need', tax: 'heavy', authority: 'assembly', succession: 'election', inheritance: 'equal', speech: 'free' },
+    culture: { allocation: 'exchange', land: 'private', occupation: 'free', distribution: 'need', tax: 'heavy', authority: 'assembly', succession: 'election', inheritance: 'equal', speech: 'free', suffrage: 'all', checks: 'assembly' },
   },
 ];

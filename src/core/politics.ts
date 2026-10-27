@@ -1,7 +1,8 @@
 // Prestige, leadership, legitimacy, enforcement, institutional change, coups and revolutions (DESIGN.md §5).
 
 import { clamp } from './dmath';
-import { ALLOC, AUTH, D, DIMS, LAND, OCCSEL, SPEECH, SUCC, TAX_RATES, optName } from './rules';
+import { ALLOC, AUTH, CHECKS, D, DIMS, LAND, OCCSEL, SPEECH, SUCC, TAX_RATES, optName } from './rules';
+import { checkingBody, factionIndex, leaderBacking, voteRow, voterTest } from './factions';
 import { addBio, ageYears, personById } from './person';
 import { addEvent } from './events';
 import { travelCosts } from './map';
@@ -114,8 +115,11 @@ export function updateLegitimacy(world: World): void {
 export function corruption(world: World): void {
   const pol = world.polity;
   const takers = [leader(world), ...pol.councilIds.map((id) => personById(world, id))].filter((p): p is Person => !!p);
+  // others who can veto and remove you watch the books
+  const checks = pol.active[D.checks] ? pol.institutions[D.checks] : CHECKS.none;
+  const watched = checks === CHECKS.council ? 1 - 0.6 * world.params.checkedGraft : checks === CHECKS.assembly ? 1 - world.params.checkedGraft : 1;
   for (const p of takers) {
-    const share = world.params.corruption * (1 - p.integrity) * (p.role === 'leader' ? 1 : 0.3);
+    const share = world.params.corruption * (1 - p.integrity) * (p.role === 'leader' ? 1 : 0.3) * watched;
     const take = pol.treasury.food * share;
     pol.treasury.food -= take;
     p.food += take;
@@ -190,10 +194,10 @@ function officeHolders(world: World, ok: (p: Person) => boolean): Person[] {
 }
 
 /** Choose a leader according to the succession institution. Returns the new leader. */
-export function chooseLeader(world: World, rng: Rng, reason: string): Person | undefined {
+export function chooseLeader(world: World, rng: Rng, reason: string, exclude = -1): Person | undefined {
   const pol = world.polity;
   const old = leader(world);
-  const pool = officeHolders(world, (p) => ageYears(world, p) >= 20 && p.role !== 'governor');
+  const pool = officeHolders(world, (p) => ageYears(world, p) >= 20 && p.role !== 'governor' && p.id !== exclude);
   if (!pool.length) return undefined;
   const rule = pol.institutions[D.succession];
   let pick: Person | undefined;
@@ -212,25 +216,9 @@ export function chooseLeader(world: World, rng: Rng, reason: string): Person | u
   };
   switch (rule) {
     case SUCC.election: {
-      const cands = [...pool].sort((a, b) => b.prestige - a.prestige || a.id - b.id).slice(0, 5);
-      const votes = new Map<number, number>(cands.map((c) => [c.id, 0]));
-      for (const v of adults(world)) {
-        let bc = cands[0];
-        let bv = -Infinity;
-        for (const c of cands) {
-          const score = c.prestige * 0.5 + (c.social - 50) / 50 + similarity(v, c) * 6 + (c.settlement === v.settlement ? 0.5 : 0) + rng.next();
-          if (score > bv) {
-            bv = score;
-            bc = c;
-          }
-        }
-        votes.set(bc.id, (votes.get(bc.id) ?? 0) + 1);
-      }
-      let top = cands[0];
-      for (const c of cands) if ((votes.get(c.id) ?? 0) > (votes.get(top.id) ?? 0)) top = c;
-      const total = [...votes.values()].reduce((a, b) => a + b, 0) || 1;
-      pick = top;
-      detail = `得票 ${Math.round(((votes.get(top.id) ?? 0) / total) * 100)}%`;
+      const r = election(world, rng, pool);
+      pick = r.pick;
+      detail = r.detail;
       break;
     }
     case SUCC.hereditary: {
@@ -264,6 +252,54 @@ export function chooseLeader(world: World, rng: Rng, reason: string): Person | u
   if (!pick) return undefined;
   setLeader(world, pick, reason, detail);
   return pick;
+}
+
+/** Each faction puts up its leader (or its most prestigious eligible member); those with the vote choose. */
+function election(world: World, rng: Rng, pool: Person[]): { pick: Person; detail: string } {
+  const pol = world.polity;
+  const eligible = new Set(pool.map((p) => p.id));
+  const cands: Person[] = [];
+  for (const f of pol.factions.slice(0, 5)) {
+    const l = personById(world, f.leaderId);
+    const c = l && eligible.has(l.id) ? l : pool.filter((p) => p.faction === f.id).sort((a, b) => b.prestige - a.prestige || a.id - b.id)[0];
+    if (c && !cands.includes(c)) cands.push(c);
+  }
+  if (cands.length < 2) {
+    for (const p of [...pool].sort((a, b) => b.prestige - a.prestige || a.id - b.id)) {
+      if (cands.length >= 5) break;
+      if (!cands.includes(p)) cands.push(p);
+    }
+  }
+  const votes = new Map<number, number>(cands.map((c) => [c.id, 0]));
+  const ok = voterTest(world);
+  const loyalty = world.params.partyLoyalty;
+  for (const v of adults(world)) {
+    if (!ok(v)) continue;
+    let bc = cands[0];
+    let bv = -Infinity;
+    for (const c of cands) {
+      const score = c.prestige * 0.5 + (c.social - 50) / 50 + similarity(v, c) * 6 + (c.settlement === v.settlement ? 0.5 : 0) +
+        (v.faction >= 0 && v.faction === c.faction ? loyalty : 0) + rng.next();
+      if (score > bv) {
+        bv = score;
+        bc = c;
+      }
+    }
+    votes.set(bc.id, (votes.get(bc.id) ?? 0) + 1);
+  }
+  let top = cands[0];
+  for (const c of cands) if ((votes.get(c.id) ?? 0) > (votes.get(top.id) ?? 0)) top = c;
+  const total = [...votes.values()].reduce((a, b) => a + b, 0) || 1;
+  const fx = factionIndex(world);
+  for (const f of pol.factions) f.votes = 0;
+  const parts: string[] = [];
+  for (const c of cands) {
+    const share = (votes.get(c.id) ?? 0) / total;
+    const f = fx.get(c.faction);
+    if (f) f.votes += share;
+    parts.push(`${c.name}${f ? `（${f.name}）` : ''} ${pct(share)}`);
+  }
+  return { pick: top, detail: `得票 ${pct((votes.get(top.id) ?? 0) / total)}；${parts.join('，')}` };
 }
 
 function setLeader(world: World, p: Person, reason: string, detail: string): void {
@@ -306,9 +342,9 @@ export function chooseCouncil(world: World): void {
   const rule = pol.institutions[D.succession];
   const key = (p: Person) =>
     rule === SUCC.exam ? (p.math + p.social) / 2 : rule === SUCC.hereditary ? p.prestige + p.plots * 0.05 : p.prestige;
-  const cands = officeHolders(world, (p) => ageYears(world, p) >= 25 && p.role !== 'leader' && p.role !== 'governor' && p.role !== 'chief')
-    .sort((a, b) => key(b) - key(a) || a.id - b.id)
-    .slice(0, COUNCIL_SIZE);
+  const pool = officeHolders(world, (p) => ageYears(world, p) >= 25 && p.role !== 'leader' && p.role !== 'governor' && p.role !== 'chief')
+    .sort((a, b) => key(b) - key(a) || a.id - b.id);
+  const cands = rule === SUCC.election && pol.factions.length ? proportionalSeats(world, pool) : pool.slice(0, COUNCIL_SIZE);
   pol.councilIds = cands.map((p) => p.id);
   for (const p of cands) {
     if (!p.notable) addBio(world, p, '进入长老议事会');
@@ -318,9 +354,32 @@ export function chooseCouncil(world: World): void {
   }
 }
 
+/** Under elections, council seats go to the factions by their vote share (D'Hondt), filled by each one's best members. */
+function proportionalSeats(world: World, pool: Person[]): Person[] {
+  const fs = world.polity.factions;
+  const share = fs.map((f) => (f.votes > 0 ? f.votes : f.size));
+  const seats = fs.map(() => 0);
+  const byFaction = fs.map((f) => pool.filter((p) => p.faction === f.id));
+  for (let i = 0; i < COUNCIL_SIZE; i++) {
+    let best = -1;
+    for (let k = 0; k < fs.length; k++) {
+      if (seats[k] >= byFaction[k].length) continue;
+      if (best < 0 || share[k] / (seats[k] + 1) > share[best] / (seats[best] + 1)) best = k;
+    }
+    if (best < 0) break;
+    seats[best]++;
+  }
+  const out = byFaction.flatMap((g, k) => g.slice(0, seats[k]));
+  for (const p of pool) {
+    if (out.length >= COUNCIL_SIZE) break;
+    if (!out.includes(p)) out.push(p);
+  }
+  return out;
+}
+
 /** Those raised to power by an order come to favour the rules that empowered them. */
 function embrace(p: Person, institutions: number[]): void {
-  for (const d of [D.authority, D.succession]) {
+  for (const d of [D.authority, D.succession, D.checks]) {
     const row = p.prefs[d];
     for (let o = 0; o < row.length; o++) row[o] = row[o] * 0.5 + (o === institutions[d] ? 0.5 : 0);
   }
@@ -451,7 +510,8 @@ export function powerWeights(world: World): Map<number, number> {
   const pol = world.polity;
   const auth = pol.institutions[D.authority];
   const w = new Map<number, number>();
-  const all = adults(world);
+  // those without the vote have no say (suffrage); office holders always count
+  const all = adults(world).filter(voterTest(world));
   const council = new Set(pol.councilIds);
   let commoners = 0;
   for (const p of all) if (p.role === 'none') commoners++;
@@ -472,13 +532,17 @@ export function powerWeights(world: World): Map<number, number> {
 /** Power-weighted support for each option of each dimension. */
 export function weightedSupport(world: World): number[][] {
   const w = powerWeights(world);
+  const fx = factionIndex(world);
   const sup = DIMS.map((d) => new Array<number>(d.options.length).fill(0));
   let total = 0;
   for (const p of world.people) {
     const v = w.get(p.id);
     if (!v) continue;
     total += v;
-    for (let d = 0; d < DIMS.length; d++) for (let o = 0; o < sup[d].length; o++) sup[d][o] += v * p.prefs[d][o];
+    for (let d = 0; d < DIMS.length; d++) {
+      const row = voteRow(world, fx, p, d);
+      for (let o = 0; o < sup[d].length; o++) sup[d][o] += v * row[o];
+    }
   }
   if (total > 0) for (const row of sup) for (let o = 0; o < row.length; o++) row[o] /= total;
   return sup;
@@ -496,24 +560,64 @@ export function popularSupport(world: World, filter?: (p: Person) => boolean): n
   return sup;
 }
 
-/** Peaceful reform when those holding power clearly prefer another option. */
+/**
+ * Peaceful reform when those holding power clearly prefer another option (members voting partly with their
+ * faction), unless the checking body — the council, or everyone with the vote — rejects it.
+ */
 export function institutionalChange(world: World): void {
   const pol = world.polity;
   const sup = weightedSupport(world);
+  const fx = factionIndex(world);
+  const body = checkingBody(world);
   for (let d = 0; d < DIMS.length; d++) {
     if (!pol.active[d]) continue;
     const row = sup[d];
     let best = 0;
     for (let o = 1; o < row.length; o++) if (row[o] > row[best]) best = o;
     const cur = pol.institutions[d];
-    if (best !== cur && row[best] - row[cur] > world.params.reformMargin) {
-      const how = pol.institutions[D.authority] === AUTH.chief ? '首领下令' : pol.institutions[D.authority] === AUTH.council ? '议事会决定' : '大会表决';
-      pol.institutions[d] = best;
-      addEvent(world, 'reform', true, `改革：${DIMS[d].name}`,
-        `${how}，${DIMS[d].name}由「${optName(DIMS[d].id, cur)}」改为「${optName(DIMS[d].id, best)}」（加权支持 ${pct(row[best])} 对 ${pct(row[cur])}）。`,
-        [pol.leaderId]);
+    if (best === cur || row[best] - row[cur] <= world.params.reformMargin) continue;
+    const how = pol.institutions[D.authority] === AUTH.chief ? '首领下令' : pol.institutions[D.authority] === AUTH.council ? '议事会决定' : '大会表决';
+    const change = `${DIMS[d].name}由「${optName(DIMS[d].id, cur)}」改为「${optName(DIMS[d].id, best)}」`;
+    const camps = factionCamps(world, d, best, cur);
+    let vote = '';
+    if (body && body.members.length) {
+      let yes = 0;
+      for (const p of body.members) {
+        const r = voteRow(world, fx, p, d);
+        if (r[best] > r[cur]) yes++;
+      }
+      const no = body.members.length - yes;
+      if (yes <= no) {
+        if (pol.vetoed[d] !== best) {
+          pol.vetoed[d] = best;
+          addEvent(world, 'reform', false, `改革被否决：${DIMS[d].name}`,
+            `掌权者提议${change}（加权支持 ${pct(row[best])} 对 ${pct(row[cur])}），被${body.name}以 ${yes} 对 ${no} 否决。${camps}`,
+            [pol.leaderId]);
+        }
+        continue;
+      }
+      vote = `，${body.name}以 ${yes} 对 ${no} 通过`;
     }
+    pol.vetoed[d] = -1;
+    pol.institutions[d] = best;
+    addEvent(world, 'reform', true, `改革：${DIMS[d].name}`,
+      `${how}${vote}，${change}（加权支持 ${pct(row[best])} 对 ${pct(row[cur])}）。${camps}`,
+      [pol.leaderId]);
   }
+}
+
+/** Which factions back a change and which oppose it. */
+function factionCamps(world: World, d: number, to: number, from: number): string {
+  const pro: string[] = [];
+  const con: string[] = [];
+  for (const f of world.polity.factions) {
+    if (f.power < 0.02) continue;
+    const label = `${f.name}（${pct(f.power)}）`;
+    if (f.prefs[d][to] > f.prefs[d][from]) pro.push(label);
+    else con.push(label);
+  }
+  if (!pro.length && !con.length) return '';
+  return `支持：${pro.join('、') || '无'}；反对：${con.join('、') || '无'}。`;
 }
 
 function pct(x: number): string {
@@ -540,8 +644,22 @@ export function unrest(world: World, rng: Rng): void {
 
   const l = leader(world);
   if (!l) return;
+  // with checks, a leader who has lost the people and the checking body is removed peacefully
+  const body = checkingBody(world);
+  if (body && body.members.length && pol.legitimacy < 0.4 && leaderBacking(world, body.members) < 0.5 && rng.chance(P.impeachRate)) {
+    const oldName = l.name;
+    const was = pol.legitimacy;
+    addBio(world, l, `被${body.name}罢免`);
+    l.role = 'none';
+    const next = chooseLeader(world, rng, `${body.name}罢免了失去民心的 ${oldName}`, l.id);
+    pol.legitimacy = clamp(was + 0.15, 0, 1);
+    addEvent(world, 'coup', true, `罢免：${oldName}下台`,
+      `合法性跌到 ${pct(was)}，${oldName}的派系在${body.name}中不占多数，被和平罢免${next ? `，${next.name}继任` : ''}。没有流血。`,
+      [l.id, ...(next ? [next.id] : [])]);
+    return;
+  }
   const seizure = pol.institutions[D.succession] === SUCC.seizure;
-  if (pol.legitimacy < 0.4 || seizure) {
+  if (pol.legitimacy < 0.4 + (body ? 0 : P.uncheckedCoup) || seizure) {
     let challenger: Person | undefined;
     let cs = 0;
     for (const p of all) {
@@ -553,9 +671,12 @@ export function unrest(world: World, rng: Rng): void {
       }
     }
     if (!challenger || challenger.ambition < 0.65 || (!seizure && challenger.integrity > 0.45)) return;
-    if (!rng.chance(seizure ? 0.25 : 0.3)) return;
-    const atk = strength(challenger) * (1 + (1 - pol.legitimacy));
-    const def = strength(l) * (1 + pol.legitimacy * 2);
+    if (!rng.chance((seizure ? 0.25 : 0.3) * (body ? 0.5 : 1))) return;
+    // each side brings its faction
+    const backing = (p: Person) => (p.faction >= 0 ? pol.factions.find((f) => f.id === p.faction)?.power ?? 0 : 0);
+    const own = challenger.faction === l.faction ? 0 : backing(challenger);
+    const atk = strength(challenger) * (1 + (1 - pol.legitimacy)) * (1 + 2 * own);
+    const def = strength(l) * (1 + pol.legitimacy * 2) * (1 + 2 * backing(l));
     if (atk > def * rng.range(0.7, 1.3)) {
       const oldName = l.name;
       addBio(world, l, `被 ${challenger.name} 推翻`);
@@ -640,6 +761,12 @@ export function updateActive(world: World): void {
   if (!was && pol.active[D.land]) {
     addEvent(world, 'misc', false, '土地问题浮现', '人们开始耕种或放牧，土地归谁所有成为需要回答的问题。');
   }
+  // who may vote matters once something is put to a vote
+  const voting = pol.institutions[D.authority] !== AUTH.chief || pol.institutions[D.succession] === SUCC.election;
+  if (voting && !pol.active[D.suffrage] && world.day > DAYS_PER_YEAR) {
+    addEvent(world, 'misc', false, '投票权问题浮现', '议事会、大会或选举让"谁有资格表决"成为需要回答的问题。');
+  }
+  pol.active[D.suffrage] = voting;
 }
 
 /** A player-initiated movement: idealists adopt the idea; others react according to interest. */

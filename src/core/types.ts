@@ -141,6 +141,14 @@ export interface Person {
   /** chief: hereditary headman of a settlement outside the core (control.ts). governor: put in charge of a conquered settlement by the conquerors (war.ts). */
   role: 'none' | 'leader' | 'council' | 'governor' | 'chief';
   notable: boolean;
+  /** Political faction id in the home polity, or -1 (factions.ts). */
+  faction: number;
+  /** Held office as leader, elder, governor or headman, or descends from one through the father. */
+  noble: boolean;
+  /** Social standing: percentile of wealth and office among the polity's adults, 0..1, updated yearly. */
+  rank: number;
+  /** The household's rank while this person grew up (father's, else mother's or guardian's), -1 if unknown. */
+  originRank: number;
   bio: { day: number; text: string }[];
 }
 
@@ -219,6 +227,29 @@ export interface Polity {
   /** Dimensions that have become relevant. */
   active: boolean[];
   dynasty: number;
+  /** Political factions, recomputed yearly (factions.ts). */
+  factions: Faction[];
+  factionSeq: number;
+  /** Per dimension: the option whose reform was last vetoed, or -1 (so a standing veto is reported once). */
+  vetoed: number[];
+}
+
+/** A political faction (party once there are elections): people with shared stances and identities. */
+export interface Faction {
+  id: number;
+  name: string;
+  /** What holds it together, e.g. '家族', '民族', '职业', '主张'. */
+  basis: string;
+  leaderId: number;
+  founded: number;
+  /** Members (adults). */
+  size: number;
+  /** Share of the polity's power weight held by its members, 0..1. */
+  power: number;
+  /** Members' mean preference rows: the faction's platform. */
+  prefs: number[][];
+  /** Vote share in the last election, 0..1 (0 if none yet). */
+  votes: number;
 }
 
 export interface TechState {
@@ -281,6 +312,12 @@ export interface YearStats {
   /** People driven out of their settlement for shirking this year. */
   exiled: number;
   outsiders: number;
+  /** Intergenerational rank correlation of adults 30–55 with their childhood household (-1 if too few known). */
+  mobility: number;
+  /** Share of those adults in their father's occupation, and share from the bottom 40% now in the top 40%. */
+  occInherit: number;
+  upward: number;
+  factions: number;
 }
 
 export type Command =

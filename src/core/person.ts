@@ -112,6 +112,10 @@ function blank(world: World, rng: Rng, sex: 0 | 1, birth: number, settlement: nu
     prefs: [],
     role: 'none',
     notable: false,
+    faction: -1,
+    noble: false,
+    rank: 0.5,
+    originRank: -1,
     bio: [],
   };
 }
@@ -145,6 +149,8 @@ export function createChild(world: World, rng: Rng, mother: Person, father: Pers
   p.name = randomName(rng, sex, surname);
   p.motherId = mother.id;
   p.ethnicity = father ? father.ethnicity : mother.ethnicity; // reckoned through the father
+  p.noble = father ? father.noble : mother.noble;
+  p.originRank = father ? father.rank : mother.rank;
   p.fatherId = father ? father.id : -1;
   const h = world.params.heritability;
   const noise = Math.sqrt(1 - h * h);

@@ -5,6 +5,7 @@ import { ALLOC, D, DIMS } from './rules';
 import { ENV_NAMES, TECHS, availableTechs, envFlags, prereqsMet } from './tech';
 import { foodNeed, wealth } from './economy';
 import { weightedSupport } from './politics';
+import { mobilityStats } from './factions';
 import { ADULT_AGE, NOCC, OCC } from './types';
 import type { Person, World, YearStats } from './types';
 
@@ -95,6 +96,7 @@ export function yearStats(world: World): YearStats {
     }
   }
   const sup = weightedSupport(world);
+  const mob = mobilityStats(world);
   const lm = world.lastMonth;
   return {
     year: Math.floor(world.day / 360),
@@ -117,6 +119,8 @@ export function yearStats(world: World): YearStats {
     occHours: world.yearAcc.hours.map((h, o) => h / Math.max(1, world.yearAcc.workDays[o])),
     exiled: world.yearAcc.exiled,
     outsiders,
+    ...mob,
+    factions: world.polity.factions.length,
   };
 }
 
