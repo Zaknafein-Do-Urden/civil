@@ -90,7 +90,7 @@ export function decideHours(world: World, s: Settlement, people: Person[], yield
   const horizon = 1 / Math.max(1e-4, decay);
   const lean = leanDays(world, s);
   const g = pooled ? generosityCulture(world, people) : 0;
-  const tax = taxRate(s);
+  const tax = taxRate(world, s);
   for (const p of people) {
     const wf = workFactor(ageDays(world, p));
     if (p.occ < 0 || wf <= 0 || p.health < 0.2) {

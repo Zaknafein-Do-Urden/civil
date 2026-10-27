@@ -4,6 +4,7 @@ import { clamp, season } from './dmath';
 import { ALLOC, D, DIST, LAND, OCCSEL, SPEECH, TAX_RATES } from './rules';
 import { has } from './tech';
 import { personById } from './person';
+import { collection, localRuler, splitTax } from './control';
 import { decideHours, growingFactor, repShare } from './labor';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, NOCC, NO_OCC, OCC } from './types';
@@ -67,8 +68,9 @@ export function foodDecayRate(world: World): number {
   return world.params.foodDecay * (has(world, 'pottery') ? 0.4 : 1);
 }
 
-export function taxRate(s: Settlement): number {
-  return TAX_RATES[s.practiced[D.tax]] * s.enforcement;
+/** Tax the people of `s` actually pay: whoever collects it, centre or local ruler (control.ts). */
+export function taxRate(world: World, s: Settlement): number {
+  return TAX_RATES[s.practiced[D.tax]] * collection(world, s);
 }
 
 function tileTempToday(world: World, temp: number): number {
@@ -197,8 +199,11 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   const P = world.params;
   const alloc = s.practiced[D.allocation];
   const pooled = alloc !== ALLOC.exchange;
-  const tax = taxRate(s);
+  const tax = taxRate(world, s);
   const treasury = world.polity.treasury;
+  // the further from the centre, the less of the tax goes up; the local ruler keeps part for his family
+  const lord = localRuler(world, s);
+  const [toCentre, toLord, toPool] = splitTax(world, s, lord);
   const acc = world.researchAcc;
 
   // Farming: clear new plots when there are more farmers than plots; settle who farms which land
@@ -301,9 +306,24 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
         keep -= payRent(world, s, people, keep * 0.4);
       }
     }
-    if (isFood) treasury.food += taxed;
-    else if (o === OCC.tool) treasury.tools += taxed;
-    else treasury.clothes += taxed;
+    if (taxed > 0) {
+      if (isFood) {
+        treasury.food += taxed * toCentre;
+        s.food += taxed * toPool;
+        if (lord) lord.food += taxed * toLord;
+        s.skimAcc += taxed * toLord;
+      } else if (o === OCC.tool) {
+        treasury.tools += taxed * toCentre;
+        s.tools += taxed * toPool;
+        if (lord) lord.tools += taxed * toLord;
+        s.skimAcc += taxed * toLord * s.toolPrice;
+      } else {
+        treasury.clothes += taxed * toCentre;
+        s.clothes += taxed * toPool;
+        if (lord) lord.clothes += taxed * toLord;
+        s.skimAcc += taxed * toLord * s.clothesPrice;
+      }
+    }
     if (pooled && !ownFarm) {
       // the hungry eat part of their own catch on the spot
       const eaten = isFood ? keep * p.hunger : 0;
@@ -433,6 +453,7 @@ function homestead(world: World, s: Settlement, people: Person[], cleared: numbe
 function rankWeight(p: Person): number {
   if (p.role === 'leader') return 4;
   if (p.role === 'council' || p.role === 'governor') return 2.5;
+  if (p.role === 'chief') return 2;
   if (p.occ === OCC.admin) return 1.8;
   return 1 + clamp(p.prestige, 0, 2) * 0.15;
 }

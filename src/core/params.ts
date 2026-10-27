@@ -70,6 +70,8 @@ export interface Params {
   tributeRate: number;
   conquestMassacre: number;
   secession: number;
+  vassalThreshold: number;
+  vassalTribute: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -133,6 +135,8 @@ export const DEFAULT_PARAMS: Params = {
   tributeRate: 0.1,
   conquestMassacre: 1,
   secession: 1,
+  vassalThreshold: 0.2,
+  vassalTribute: 0.15,
 };
 
 export interface ParamDef {
@@ -203,6 +207,8 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'casualtyRate', name: '伤亡率', desc: '一次势均力敌的战役中参战者的阵亡比例', min: 0, max: 0.5, step: 0.01 },
   { key: 'raidLoot', name: '劫掠比例', desc: '劫掠完全得手时抢走目标聚落存粮的比例', min: 0, max: 1, step: 0.05 },
   { key: 'conquestMassacre', name: '征服屠杀', desc: '聚落被攻陷时，被征服民族的男性被杀的比例（含男童）', min: 0, max: 1, step: 0.05 },
+  { key: 'vassalThreshold', name: '附庸门槛', desc: '执行力低于「执行门槛」但不低于此值的聚落是附庸：自行其是，只交名义贡赋；再低就是化外之地', min: 0, max: 0.6, step: 0.05 },
+  { key: 'vassalTribute', name: '附庸贡赋', desc: '附庸收上来的税中交给中央的比例', min: 0, max: 0.6, step: 0.05 },
   { key: 'secession', name: '分离倾向', desc: '管不到的聚落每年独立或投靠邻国的倾向倍数；0 表示从不分离', min: 0, max: 3, step: 0.1 },
   { key: 'tributeRate', name: '贡赋比例', desc: '朝贡国每年缴纳的公库与存粮比例', min: 0, max: 0.5, step: 0.01 },
 ];

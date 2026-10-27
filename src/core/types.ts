@@ -136,8 +136,8 @@ export interface Person {
   outputAcc: number;
   /** Preference weights per rule dimension and option, each row sums to 1. */
   prefs: number[][];
-  /** governor: put in charge of a conquered settlement by the conquerors (war.ts). */
-  role: 'none' | 'leader' | 'council' | 'governor';
+  /** chief: hereditary headman of a settlement outside the core (control.ts). governor: put in charge of a conquered settlement by the conquerors (war.ts). */
+  role: 'none' | 'leader' | 'council' | 'governor' | 'chief';
   notable: boolean;
   bio: { day: number; text: string }[];
 }
@@ -177,6 +177,11 @@ export interface Settlement {
   conquered: number;
   /** Person the conquerors put in charge while it is not assimilated, or -1. */
   governor: number;
+  /** Local headman outside the core, or -1 (control.ts). */
+  chief: number;
+  /** Tax kept by the local ruler for his family: this year so far, and last year. */
+  skimAcc: number;
+  skimmed: number;
   /** Days left of a running epidemic (0 = none), its severity 0..1 and deaths so far (disease.ts). */
   epidemic: number;
   epiSeverity: number;

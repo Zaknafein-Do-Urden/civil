@@ -19,6 +19,7 @@ import {
 } from './politics';
 import { cultureMonthly } from './culture';
 import { diseaseMonthly } from './disease';
+import { updateLocalRulers } from './control';
 import { updateDemand, yearStats } from './stats';
 import { emptyTileHistory, recordTileHistory } from './tiles';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
@@ -369,6 +370,7 @@ function yearly(world: World, rng: Rng): void {
   updateActive(world);
   updateEnforcement(world);
   updatePracticed(world, groups);
+  updateLocalRulers(world, groups);
   institutionalChange(world);
   unrest(world, rng);
   maybeElection(world, rng);
@@ -414,6 +416,7 @@ export function deserialize(json: string): World {
   // saves from before ethnicity and epidemics
   for (const s of w.settlements) {
     s.governor ??= -1;
+    if (s.chief === undefined) Object.assign(s, { chief: -1, skimAcc: 0, skimmed: 0 });
     if (s.epidemic === undefined) Object.assign(s, { epidemic: 0, epiSeverity: 0, epiDeaths: 0, epiName: '', immunity: 0 });
   }
   for (const p of w.people) p.ethnicity ??= w.settlements[p.settlement].origin;

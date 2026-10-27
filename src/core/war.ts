@@ -9,6 +9,7 @@ import { addEvent } from './events';
 import { hexDistance, neighbors } from './map';
 import { TECH_INDEX } from './tech';
 import { killPeople } from './demography';
+import { levyObedience } from './control';
 import { appointAdmins, chooseCouncil, chooseLeader, powerWeights, updateEnforcement } from './politics';
 import { PLAYER, allPolities, inPolity, newScope, polityName, polityOf, polityView, scopeOf, takenNames } from './nations';
 import { UNSPECIFIED } from './rules';
@@ -141,7 +142,7 @@ function raise(world: World, rng: Rng, r: Realm, target: Tile, range: number, le
   for (const s of r.settlements) {
     const d = hexDistance(world.map.tiles[s.tile], target);
     if (d > range) continue;
-    const share = s.id === home ? 1 : levy * (0.5 + 0.5 * s.enforcement);
+    const share = s.id === home ? 1 : levy * levyObedience(world, s);
     for (const p of r.men.get(s.id) ?? []) {
       if (!rng.chance(share)) continue;
       men.push(p);
@@ -653,7 +654,7 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
   for (const p of world.people) {
     if (p.settlement !== s.id) continue;
     if (p.role !== 'none') {
-      addBio(world, p, `${s.name}被${winner.pol.name}攻占，失去${p.role === 'leader' ? '首领' : p.role === 'governor' ? '镇守' : '长老'}之位`);
+      addBio(world, p, `${s.name}被${winner.pol.name}攻占，失去${p.role === 'leader' ? '首领' : p.role === 'governor' ? '镇守' : p.role === 'chief' ? '头人' : '长老'}之位`);
       if (p.role === 'leader') captured.push(p);
       p.role = 'none';
     }
@@ -676,6 +677,7 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
   addGrudge(rel, loser.id, 0.5);
   if (s.origin === winner.id) s.conquered = -1; // a lost settlement taken back
   s.governor = -1;
+  s.chief = -1;
   const settlers = victims.length ? settle(world, s, winner) : 0;
   const gov = s.origin === winner.id ? undefined : appointGovernor(world, s);
   addEvent(world, 'war', involvesPlayer(winner.id, loser.id), `征服：${s.name}归属${winner.pol.name}`,
@@ -904,18 +906,23 @@ function secession(world: World, rng: Rng, R: (Realm | undefined)[]): void {
     const held = !!gov && gov.settlement === s.id && gov.role === 'governor';
     if (held) for (const p of folk) if (p !== gov) p.grievance = clamp(p.grievance + 0.04, 0, 1); // ruled by an outsider
     if (s.enforcement >= P.enforceThreshold) continue;
-    out.set(ruler.id, (out.get(ruler.id) ?? 0) + folk.length);
+    // vassals run their own affairs and mostly stay; land beyond reach is a burden and drifts away
+    const vassal = s.enforcement >= P.vassalThreshold;
+    out.set(ruler.id, (out.get(ruler.id) ?? 0) + folk.length * (vassal ? 0.3 : 1));
     const locals = folk.filter((p) => ageYears(world, p) >= ADULT_AGE);
     if (locals.length < 10) continue;
-    for (const p of locals) p.grievance = clamp(p.grievance + 0.02, 0, 1); // taxed, but neither protected nor fed
+    if (!vassal) for (const p of locals) p.grievance = clamp(p.grievance + 0.02, 0, 1); // taxed, but neither protected nor fed
     let g = 0;
     for (const p of locals) g += p.grievance;
     g /= locals.length;
     const mine = localPrefs(locals);
     const gap = 1 - similarity(mine, meanPrefs(ruler));
     const remote = clamp((P.enforceThreshold - s.enforcement) / P.enforceThreshold, 0, 1);
-    const want = remote * 0.4 + (g - 0.2) * 0.8 + gap * 1.5 - ruler.pol.legitimacy * 0.3;
-    if (!rng.chance(clamp(want * 0.5 * P.secession, 0, MAX_YEARLY_SECESSION))) continue;
+    // an ambitious headman with his own following pushes for it
+    const chief = personById(world, s.chief);
+    const lordly = chief && chief.role === 'chief' && chief.settlement === s.id ? (chief.ambition - 0.5) * 0.4 : 0;
+    const want = remote * 0.4 + (g - 0.2) * 0.8 + gap * 1.5 + lordly - ruler.pol.legitimacy * 0.3;
+    if (!rng.chance(clamp(want * 0.5 * P.secession * (vassal ? 0.3 : 1), 0, MAX_YEARLY_SECESSION))) continue;
 
     // a strong neighbour with similar ways nearby is worth joining
     const here = world.map.tiles[s.tile];
@@ -962,9 +969,10 @@ function secession(world: World, rng: Rng, R: (Realm | undefined)[]): void {
       if (gv) bury(world, ruler, [gv], '被分离者所杀');
     }
     for (const p of folk) {
-      if (p.role === 'council') p.role = 'none';
+      if (p.role === 'council' || p.role === 'chief') p.role = 'none';
       if (p.occ === OCC.admin) p.occ = OCC.gather;
     }
+    s.chief = -1;
     old.councilIds = old.councilIds.filter((id) => personById(world, id)?.settlement !== s.id);
     ruler.settlements = ruler.settlements.filter((x) => x.id !== s.id);
     if (to) {

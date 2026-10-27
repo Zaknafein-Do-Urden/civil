@@ -2,6 +2,10 @@
 
 import { isLand, neighbors } from '../core/map';
 import type { Terrain, Tile, World, WorldMap } from '../core/types';
+import { tier } from '../core/control';
+import type { Tier } from '../core/control';
+
+const TIER_COLORS: Record<Tier, string> = { core: '#5cd18b', province: '#4fb3ff', vassal: '#ffb74d', fringe: '#ff5252' };
 import { allPolities, polityColor } from '../core/nations';
 
 const TERRAIN_COLOR: Record<Terrain, string> = {
@@ -65,7 +69,7 @@ export function legendHtml(o: Overlay): string {
     case 'polities':
       return `<b>政体</b>：领地按所属政体着色，粗线＝政体边界，金边＝首都`;
     case 'institutions':
-      return `<b>执行力</b>：地形底图；红色虚线圈＝制度执行不到的聚落`;
+      return `<b>管辖层级</b>：聚落外圈${swatches([[TIER_COLORS.core, '核心'], [TIER_COLORS.province, '地方'], [TIER_COLORS.vassal, '附庸（虚线）'], [TIER_COLORS.fringe, '化外（虚线）']])}`;
     default:
       return `<b>地形</b>：底色为地形，黄色＝农田，彩色＝聚落领地，蓝线＝河流`;
   }
@@ -290,9 +294,11 @@ export class MapView {
         ctx.lineWidth = cap ? 2.5 : 1;
         ctx.strokeStyle = cap ? '#ffd54a' : 'rgba(0,0,0,0.7)';
         ctx.stroke();
-        if (layer === 'institutions' && st.enforcement < world.params.enforceThreshold) {
-          ctx.strokeStyle = '#ff5252';
-          ctx.setLineDash([3, 2]);
+        if (layer === 'institutions') {
+          const t = tier(world, st);
+          ctx.strokeStyle = TIER_COLORS[t];
+          ctx.lineWidth = 2;
+          ctx.setLineDash(t === 'vassal' || t === 'fringe' ? [3, 2] : []);
           ctx.beginPath();
           ctx.arc(cx, cy, r + 3, 0, Math.PI * 2);
           ctx.stroke();

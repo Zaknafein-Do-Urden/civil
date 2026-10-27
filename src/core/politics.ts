@@ -34,7 +34,7 @@ export function updatePrestige(world: World, groups: Person[][]): void {
         p.prestige *= 0.9;
         continue;
       }
-      const role = p.role === 'leader' ? 1.5 : p.role === 'council' || p.role === 'governor' ? 0.8 : p.occ === OCC.admin ? 0.4 : 0;
+      const role = p.role === 'leader' ? 1.5 : p.role === 'council' || p.role === 'governor' ? 0.8 : p.role === 'chief' ? 0.6 : p.occ === OCC.admin ? 0.4 : 0;
       const target =
         ((p.social - 50) / 50) * 0.6 +
         clamp(p.output / avgOut, 0, 3) * 0.3 +
@@ -306,7 +306,7 @@ export function chooseCouncil(world: World): void {
   const rule = pol.institutions[D.succession];
   const key = (p: Person) =>
     rule === SUCC.exam ? (p.math + p.social) / 2 : rule === SUCC.hereditary ? p.prestige + p.plots * 0.05 : p.prestige;
-  const cands = officeHolders(world, (p) => ageYears(world, p) >= 25 && p.role !== 'leader' && p.role !== 'governor')
+  const cands = officeHolders(world, (p) => ageYears(world, p) >= 25 && p.role !== 'leader' && p.role !== 'governor' && p.role !== 'chief')
     .sort((a, b) => key(b) - key(a) || a.id - b.id)
     .slice(0, COUNCIL_SIZE);
   pol.councilIds = cands.map((p) => p.id);
