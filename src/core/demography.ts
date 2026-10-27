@@ -7,6 +7,7 @@ import { addEvent } from './events';
 import { isLand, moveCost, neighbors, siteScore, tilesWithin, hexDistance } from './map';
 import { has } from './tech';
 import { tileCapacity } from './tiles';
+import { epidemicRisk, huntRisk } from './disease';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, OCC } from './types';
 import type { Person, Settlement, World } from './types';
@@ -41,6 +42,18 @@ export function dailyDemography(world: World, rng: Rng, groups: Person[][]): Dea
     const age = ageYears(world, p);
     let q = (yearlyMortality(age) * P.baseMortality) / DAYS_PER_YEAR;
     if (p.health < 0.5) q += (0.5 - p.health) * 0.02;
+    const s = world.settlements[p.settlement];
+    const qe = epidemicRisk(world, s, p, age);
+    if (qe > 0 && rng.chance(qe)) {
+      s.epiDeaths++;
+      dead.push({ person: p, cause: '死于疫病' });
+      continue;
+    }
+    const qh = huntRisk(world, p);
+    if (qh > 0 && rng.chance(qh)) {
+      dead.push({ person: p, cause: rng.pick(['狩猎时被野兽所伤而死', '狩猎时坠崖身亡', '狩猎途中溺亡']) });
+      continue;
+    }
     if (p.health <= 0 || rng.chance(q)) {
       const cause = p.hunger > 0.4 ? '饿死' : p.cold > 0.3 ? '冻死' : age < 5 ? '夭折' : age > 55 ? '老死' : '病故';
       dead.push({ person: p, cause });
@@ -252,6 +265,11 @@ export function newSettlement(world: World, rng: Rng, tile: number): Settlement 
     polity: world.polity.id,
     origin: world.polity.id,
     conquered: -1,
+    epidemic: 0,
+    epiSeverity: 0,
+    epiDeaths: 0,
+    epiName: '',
+    immunity: 0,
   };
   world.settlements.push(s);
   claimTerritory(world, s);

@@ -18,6 +18,7 @@ import {
   updatePrestige,
 } from './politics';
 import { cultureMonthly } from './culture';
+import { diseaseMonthly } from './disease';
 import { updateDemand, yearStats } from './stats';
 import { emptyTileHistory, recordTileHistory } from './tiles';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
@@ -245,6 +246,7 @@ export function step(world: World): void {
   if (world.day % DAYS_PER_MONTH === 0) {
     forEachPolity(world, (v) => monthly(v, rng, groupBySettlement(v)));
     warMonthly(world, rng);
+    diseaseMonthly(world, rng);
   }
   if (world.day % DAYS_PER_YEAR === 0) {
     forEachPolity(world, (v) => yearly(v, rng));
@@ -409,6 +411,11 @@ export function deserialize(json: string): World {
     }
   }
   migrateLabor(w);
+  // saves from before ethnicity and epidemics
+  for (const s of w.settlements) {
+    if (s.epidemic === undefined) Object.assign(s, { epidemic: 0, epiSeverity: 0, epiDeaths: 0, epiName: '', immunity: 0 });
+  }
+  for (const p of w.people) p.ethnicity ??= w.settlements[p.settlement].origin;
   w.tileHistory ??= emptyTileHistory(); // saves from before tile history
   return w;
 }

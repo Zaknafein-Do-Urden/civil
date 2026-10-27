@@ -39,6 +39,9 @@ export interface Params {
   // Demography
   fertility: number;
   baseMortality: number;
+  huntDanger: number;
+  epidemicRate: number;
+  epidemicLethality: number;
   starvationDamage: number;
   coldDamage: number;
   heritability: number;
@@ -65,6 +68,7 @@ export interface Params {
   casualtyRate: number;
   raidLoot: number;
   tributeRate: number;
+  conquestMassacre: number;
 }
 
 export const DEFAULT_PARAMS: Params = {
@@ -101,6 +105,9 @@ export const DEFAULT_PARAMS: Params = {
   outsiderRep: 0.6,
   fertility: 0.3,
   baseMortality: 1,
+  huntDanger: 0.012,
+  epidemicRate: 0.01,
+  epidemicLethality: 0.15,
   starvationDamage: 0.04,
   coldDamage: 0.02,
   heritability: 0.5,
@@ -123,6 +130,7 @@ export const DEFAULT_PARAMS: Params = {
   casualtyRate: 0.12,
   raidLoot: 0.35,
   tributeRate: 0.1,
+  conquestMassacre: 1,
 };
 
 export interface ParamDef {
@@ -168,6 +176,9 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'outsiderRep', name: '外来者声誉', desc: '迁入或被排挤到别处的人初始的声誉，需要靠贡献重新挣得', min: 0.2, max: 1, step: 0.05 },
   { key: 'fertility', name: '生育率', desc: '已婚育龄妇女每年生育概率', min: 0.05, max: 0.6, step: 0.01 },
   { key: 'baseMortality', name: '基础死亡率倍数', desc: '年龄相关死亡率的整体倍数', min: 0.2, max: 3, step: 0.05 },
+  { key: 'huntDanger', name: '狩猎死亡风险', desc: '全职猎人（每天 8 小时）每年因狩猎意外死亡的概率；体能差的人更高，有弓箭后降低', min: 0, max: 0.1, step: 0.002 },
+  { key: 'epidemicRate', name: '疫病爆发率', desc: '500 人、无免疫的聚落每月爆发疫病的概率；人越多越容易爆发，100 人以下几乎不会', min: 0, max: 0.1, step: 0.002 },
+  { key: 'epidemicLethality', name: '疫病致死率', desc: '一场最严重的疫病（持续两个月）中健康成年人的死亡比例；幼儿、老人和体弱者加倍', min: 0, max: 0.6, step: 0.01 },
   { key: 'starvationDamage', name: '饥饿伤害', desc: '每天缺粮对健康的损伤', min: 0, max: 0.2, step: 0.005 },
   { key: 'coldDamage', name: '寒冷伤害', desc: '每天受冻对健康的损伤', min: 0, max: 0.2, step: 0.005 },
   { key: 'heritability', name: '遗传度', desc: '子女能力与父母的相关程度', min: 0, max: 1, step: 0.05 },
@@ -189,5 +200,6 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'campaignRange', name: '出征半径', desc: '离目标多少格以内的聚落能出兵', min: 3, max: 30, step: 1 },
   { key: 'casualtyRate', name: '伤亡率', desc: '一次势均力敌的战役中参战者的阵亡比例', min: 0, max: 0.5, step: 0.01 },
   { key: 'raidLoot', name: '劫掠比例', desc: '劫掠完全得手时抢走目标聚落存粮的比例', min: 0, max: 1, step: 0.05 },
+  { key: 'conquestMassacre', name: '征服屠杀', desc: '聚落被攻陷时，被征服民族的男性被杀的比例（含男童）', min: 0, max: 1, step: 0.05 },
   { key: 'tributeRate', name: '贡赋比例', desc: '朝贡国每年缴纳的公库与存粮比例', min: 0, max: 0.5, step: 0.01 },
 ];

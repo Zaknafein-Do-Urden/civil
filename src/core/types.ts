@@ -78,6 +78,8 @@ export interface Person {
   id: number;
   name: string;
   sex: 0 | 1; // 0 = female, 1 = male
+  /** Ethnic group: id of the polity whose founders the father's line descends from. */
+  ethnicity: number;
   birth: number;
   settlement: number;
   fatherId: number;
@@ -172,6 +174,13 @@ export interface Settlement {
   origin: number;
   /** Day it was last conquered, or -1. */
   conquered: number;
+  /** Days left of a running epidemic (0 = none), its severity 0..1 and deaths so far (disease.ts). */
+  epidemic: number;
+  epiSeverity: number;
+  epiDeaths: number;
+  epiName: string;
+  /** Share of the people immune from the last epidemic, 0..1; fades as new generations are born. */
+  immunity: number;
 }
 
 export interface Polity {

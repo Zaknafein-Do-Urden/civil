@@ -608,7 +608,7 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
   }
 }
 
-function bury(world: World, r: Realm, dead: Person[]): void {
+function bury(world: World, r: Realm, dead: Person[], cause = '战死'): void {
   if (!dead.length) return;
   const ids = new Set(dead.map((p) => p.id));
   for (const [sid, men] of r.men) r.men.set(sid, men.filter((p) => !ids.has(p.id)));
@@ -623,7 +623,7 @@ function bury(world: World, r: Realm, dead: Person[]): void {
       if (k) k.grievance = clamp(k.grievance + 0.1, 0, 1);
     }
   }
-  killPeople(world, dead, '战死');
+  killPeople(world, dead, cause);
 }
 
 function stealFood(world: World, s: Settlement, frac: number): number {
@@ -638,10 +638,17 @@ function stealFood(world: World, s: Settlement, frac: number): number {
   return got;
 }
 
-/** A settlement changes hands with its land and people, who keep their own culture. */
+/**
+ * A settlement changes hands with its land and people. The men and boys of the conquered people are
+ * put to the sword; women and children of the victors' own people are spared and keep their culture.
+ */
 function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Realm, R: (Realm | undefined)[]): void {
   const lpol = loser.pol;
   const captured: Person[] = [];
+  const victims = world.people.filter((p) => p.settlement === s.id && p.sex === 1 && p.ethnicity !== winner.id && rng.chance(world.params.conquestMassacre));
+  const slainLeader = victims.find((p) => p.role === 'leader');
+  for (const p of victims) addBio(world, p, `${s.name}被${winner.pol.name}攻破`);
+  bury(world, loser, victims, '城破后被屠杀');
   for (const p of world.people) {
     if (p.settlement !== s.id) continue;
     if (p.role !== 'none') {
@@ -667,9 +674,12 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
   const rel = relation(world, winner.id, loser.id)!;
   addGrudge(rel, loser.id, 0.5);
   if (s.origin === winner.id) s.conquered = -1; // a lost settlement taken back
+  const settlers = victims.length ? settle(world, s, winner) : 0;
   addEvent(world, 'war', involvesPlayer(winner.id, loser.id), `征服：${s.name}归属${winner.pol.name}`,
-    `${s.name}（${s.pop} 人）被${winner.pol.name}征服${s.origin === winner.id ? '（收复故地）' : '，居民保留着自己的习俗，对新统治者心怀不满'}。` +
-    `${captured.length ? `${lpol.name}的首领${captured[0].name}被俘。` : ''}`, captured.map((p) => p.id), s.id);
+    `${s.name}（${s.pop} 人）被${winner.pol.name}征服${s.origin === winner.id ? '（收复故地）' : '，幸存的居民保留着自己的习俗，对新统治者心怀不满'}。` +
+    `${victims.length ? `城中 ${victims.length} 名${lpol.name}男子被屠杀。` : ''}` +
+    `${slainLeader ? `首领${slainLeader.name}被杀。` : captured.length ? `${lpol.name}的首领${captured[0].name}被俘。` : ''}` +
+    `${settlers ? `${winner.pol.name}的 ${settlers} 名单身男子迁入，娶当地妇女为妻。` : ''}`, captured.map((p) => p.id), s.id);
   if (!loser.settlements.length) {
     extinguish(world, lpol, `的最后一个聚落${s.name}被${winner.pol.name}攻占`);
     R[loser.id] = undefined;
@@ -685,6 +695,24 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
       updateEnforcement(v);
     });
   }
+}
+
+/** Unmarried young men of the victors move into a settlement whose men were killed, to take wives there. */
+function settle(world: World, s: Settlement, winner: Realm): number {
+  const women = world.people.filter((p) => p.settlement === s.id && p.sex === 0 && p.spouseId < 0 && ageYears(world, p) >= ADULT_AGE && ageYears(world, p) < 45).length;
+  if (!women) return 0;
+  const here = world.map.tiles[s.tile];
+  const near = new Set(winner.settlements.filter((x) => x.id !== s.id && hexDistance(here, world.map.tiles[x.tile]) <= world.params.campaignRange).map((x) => x.id));
+  const bachelors = world.people
+    .filter((p) => near.has(p.settlement) && p.sex === 1 && p.spouseId < 0 && p.role === 'none' && ageYears(world, p) >= ADULT_AGE && ageYears(world, p) < 40)
+    .sort((a, b) => a.id - b.id)
+    .slice(0, women);
+  for (const p of bachelors) {
+    addBio(world, p, `迁入新征服的${s.name}`);
+    p.settlement = s.id;
+    p.plots = 0;
+  }
+  return bachelors.length;
 }
 
 // --- revolts of conquered settlements -----------------------------------

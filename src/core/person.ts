@@ -67,6 +67,7 @@ function blank(world: World, rng: Rng, sex: 0 | 1, birth: number, settlement: nu
     id: world.nextId++,
     name: '',
     sex,
+    ethnicity: world.settlements[settlement]?.polity ?? 0,
     birth,
     settlement,
     fatherId: -1,
@@ -142,6 +143,7 @@ export function createChild(world: World, rng: Rng, mother: Person, father: Pers
   const surname = father ? surnameOf(father) : surnameOf(mother);
   p.name = randomName(rng, sex, surname);
   p.motherId = mother.id;
+  p.ethnicity = father ? father.ethnicity : mother.ethnicity; // reckoned through the father
   p.fatherId = father ? father.id : -1;
   const h = world.params.heritability;
   const noise = Math.sqrt(1 - h * h);

@@ -22,7 +22,7 @@ import { bar, esc, mini, pct } from './dom';
 import { drawChart } from './chart';
 import type { Series } from './chart';
 import { settlementColor, stockRatio } from './mapView';
-import { PLAYER, polityView } from '../core/nations';
+import { PLAYER, polityOf, polityView } from '../core/nations';
 import { diplomacy } from './diplomacy';
 
 export interface Ui {
@@ -226,6 +226,9 @@ const settlement: Tab = {
       if (p.occ >= 0) occ[p.occ]++;
     }
     const n = Math.max(1, people.length);
+    const ethnic = new Map<number, number>();
+    for (const p of people) ethnic.set(p.ethnicity, (ethnic.get(p.ethnicity) ?? 0) + 1);
+    const ethnicText = [...ethnic].sort((a, b) => b[1] - a[1]).map(([e, c]) => `${esc(polityOf(w, e).name)} ${pct(c / n)}`).join('、');
     const sorted = [...people].sort((a, b) => (a.occ - b.occ) || (b.prestige - a.prestige));
     const dots = sorted.map((p) => {
       const child = ageYears(w, p) < 16;
@@ -236,6 +239,8 @@ const settlement: Tab = {
     const diff = DIMS.map((d, di) => `<div class="small">${d.name}：<b>${esc(optName(d.id, s.practiced[di]))}</b>${s.practiced[di] !== w.polity.institutions[di] ? ' <span style="color:var(--warn)">（与国家不同）</span>' : ''}</div>`).join('');
     el.innerHTML = `<div class="person-head"><h3><span style="color:${settlementColor(s.id)}">●</span> ${esc(s.name)}${s.id === w.polity.capital ? ' ★首都' : ''} <span class="small muted">${esc(w.polity.name)}${s.origin !== s.polity ? ' · 被征服' : ''}</span></h3><a class="link" data-settlement="-1">全部聚落</a></div>
       <div class="muted small">建于${formatDate(s.founded)} · ${TERRAIN_NAMES[tile.terrain]} · 年均 ${tile.temp.toFixed(0)}°C · ${tile.river ? '河畔' : ''}${tile.coast ? '海滨' : ''}</div>
+      <div class="muted small">民族：${ethnicText || '—'}</div>
+      ${s.epidemic > 0 ? `<div class="small" style="color:var(--warn)">${esc(s.epiName)}正在流行，已有 ${s.epiDeaths} 人病死</div>` : s.immunity > 0.3 ? `<div class="muted small">多数人得过上一场疫病，暂时免疫（${pct(s.immunity)}）</div>` : ''}
       <div class="kpis" style="margin-top:6px">
         <div class="kpi"><div class="k">人口</div><div class="v">${people.length}</div></div>
         <div class="kpi"><div class="k">公共存粮</div><div class="v">${(s.food / Math.max(1, need)).toFixed(0)} 天</div></div>
@@ -446,7 +451,7 @@ function personDetail(w: World, p: Person): string {
   }).join('');
   const role = roleName(p);
   return `<div class="person-head"><h3>${esc(p.name)} <span class="muted small">${p.sex ? '男' : '女'} · ${age}岁${role ? ' · ' + role : ''}</span></h3><a class="link" data-person="-1">返回</a></div>
-    <div class="muted small">居于${settlementLink(w, p.settlement)} · ${p.occ >= 0 ? OCC_NAMES[p.occ] : age < 16 ? '儿童' : '不再劳动'} · 威望 ${p.prestige.toFixed(2)}</div>
+    <div class="muted small">民族：${esc(polityOf(w, p.ethnicity).name)} · 居于${settlementLink(w, p.settlement)} · ${p.occ >= 0 ? OCC_NAMES[p.occ] : age < 16 ? '儿童' : '不再劳动'} · 威望 ${p.prestige.toFixed(2)}</div>
     <div class="grid2">
       <div><h4>能力</h4>${bar('社交', p.social / 100, '#ab47bc', p.social.toFixed(0))}${bar('数学', p.math / 100, '#00acc1', p.math.toFixed(0))}${bar('体能', p.physical / 100, '#c0632b', p.physical.toFixed(0))}
         <h4>性格</h4>${bar('野心', p.ambition, '#ff8a65')}${bar('勤劳', p.diligence, '#b39ddb')}${bar('诚信', p.integrity, '#5cd18b')}${bar('冒险', p.risk, '#ffd54a')}${bar('从众', p.conformity, '#8d98a8')}</div>
