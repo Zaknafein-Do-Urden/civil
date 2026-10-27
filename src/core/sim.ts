@@ -114,7 +114,7 @@ function foundTribe(world: World, rng: Rng, start: number, pop: number): void {
     for (let i = 0; i < pop; i++) world.people.push(createFounder(world, rng, first.id));
     formFamilies(world, rng);
   }
-  first.food = 30 * pop;
+  first.food = 90 * pop * world.params.foodNeedAdult; // three months of stores
   world.polity.capital = first.id;
   if (!world.polity.name) world.polity.name = world.polity.id === PLAYER ? `${first.name}部落` : polityName(rng);
 
@@ -239,6 +239,9 @@ export function step(world: World): void {
   regenTiles(world);
 
   world.day++;
+  if (world.day < EARLY_DISPERSAL_DAYS && world.day % 10 === 0 && world.day % DAYS_PER_MONTH !== 0) {
+    forEachPolity(world, (v) => earlyDispersal(v, rng));
+  }
   if (world.day % DAYS_PER_MONTH === 0) {
     forEachPolity(world, (v) => monthly(v, rng, groupBySettlement(v)));
     warMonthly(world, rng);
@@ -263,6 +266,22 @@ function daily(world: World, rng: Rng): void {
   if (!world.people.length) return;
   if (leaderBefore && dead.some((d) => d.person.id === leaderBefore.id)) ensureLeader(world, rng, leaderBefore);
   else if (!personById(world, world.polity.leaderId)) ensureLeader(world, rng);
+}
+
+/** The first three months: the founding camp disperses every 10 days instead of monthly. */
+const EARLY_DISPERSAL_DAYS = 90;
+
+function earlyDispersal(world: World, rng: Rng): void {
+  const groups = groupBySettlement(world);
+  const n = world.settlements.length;
+  for (let i = 0; i < n; i++) {
+    const s = world.settlements[i];
+    if (!s.alive || !groups[s.id]?.length) continue;
+    if (maybeFission(world, rng, s, groups[s.id], true)) {
+      for (let j = 0; j < world.settlements.length; j++) groups[j] = [];
+      for (const p of world.people) groups[p.settlement].push(p);
+    }
+  }
 }
 
 function monthly(world: World, rng: Rng, groups: Person[][]): void {

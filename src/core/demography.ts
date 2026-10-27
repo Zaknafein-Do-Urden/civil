@@ -282,13 +282,14 @@ export function findSite(world: World, originTile: number, minD: number, maxD: n
 }
 
 /** Monthly check whether a settlement splits: too big to cohere, or hungry with better land nearby. */
-export function maybeFission(world: World, rng: Rng, s: Settlement, people: Person[]): Settlement | undefined {
+/** `capacityOnly`: the extra checks in the first months only look at carrying capacity (no monthly counters). */
+export function maybeFission(world: World, rng: Rng, s: Settlement, people: Person[], capacityOnly = false): Settlement | undefined {
   const P = world.params;
   const pop = people.length;
   const farmShare = people.filter((p) => p.occ === OCC.farm || p.occ === OCC.herd).length / Math.max(1, pop);
   const fissionSize = P.dunbar * (1 + 3 * farmShare) * (1 + s.enforcement * 0.5);
   const hungry = people.filter((p) => p.hunger > 0.15).length / Math.max(1, pop);
-  s.stressMonths = hungry > 0.15 ? s.stressMonths + 1 : 0;
+  if (!capacityOnly) s.stressMonths = hungry > 0.15 ? s.stressMonths + 1 : 0;
   const tooBig = pop > fissionSize * 1.4;
   const stressed = s.stressMonths >= 3 && pop >= 40;
   // foragers bud off when the home range is being eaten down, while free land remains
@@ -304,7 +305,7 @@ export function maybeFission(world: World, rng: Rng, s: Settlement, people: Pers
   let K = 0;
   for (const id of s.territory) K += tileCapacity(world, world.map.tiles[id]).people;
   const over = pop >= 20 && pop > K * 1.1;
-  if (!tooBig && !stressed && !crowded && !over) return undefined;
+  if (capacityOnly ? !over : !tooBig && !stressed && !crowded && !over) return undefined;
   if (!rng.chance(over ? 0.9 : tooBig ? 0.5 : stressed ? 0.3 : 0.08)) return undefined;
   const site = findSite(world, s.tile, 3, over ? 12 : 7);
   if (site < 0) return undefined;
