@@ -284,6 +284,7 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
   world.monthAcc.foodProduced += actual[OCC.gather] + actual[OCC.hunt] + actual[OCC.fish] + actual[OCC.farm] + actual[OCC.herd];
 
   // 3. Ownership of output
+  let rent: Landlords | undefined;
   for (let i = 0; i < people.length; i++) {
     const p = people[i];
     const o = wocc[i];
@@ -303,7 +304,8 @@ export function dailySettlement(world: World, rng: Rng, s: Settlement, people: P
         keep -= tribute;
         treasury.food += tribute;
       } else if (right === 'tenant') {
-        keep -= payRent(world, s, people, keep * 0.4);
+        rent ??= landlords(people);
+        keep -= payRent(rent, keep * 0.4);
       }
     }
     if (taxed > 0) {
@@ -422,16 +424,29 @@ function farmTenure(world: World, s: Settlement, people: Person[], isFarmer: (p:
   return rights;
 }
 
-function payRent(world: World, s: Settlement, people: Person[], amount: number): number {
-  let excess = 0;
-  for (const p of people) excess += Math.max(0, p.plots - (p.occ === OCC.farm ? 1 : 0));
-  if (excess <= 0) return 0;
+/** Landlords' rentable plots; plots and occupations don't change while output is shared out, so this is built once a day. */
+interface Landlords {
+  people: Person[];
+  excess: number[];
+  total: number;
+}
+
+function landlords(people: Person[]): Landlords {
+  const l: Landlords = { people: [], excess: [], total: 0 };
   for (const p of people) {
     const e = Math.max(0, p.plots - (p.occ === OCC.farm ? 1 : 0));
-    if (e > 0) p.food += (amount * e) / excess;
+    l.total += e;
+    if (e > 0) {
+      l.people.push(p);
+      l.excess.push(e);
+    }
   }
-  void world;
-  void s;
+  return l;
+}
+
+function payRent(l: Landlords, amount: number): number {
+  if (l.total <= 0) return 0;
+  for (let i = 0; i < l.people.length; i++) l.people[i].food += (amount * l.excess[i]) / l.total;
   return amount;
 }
 

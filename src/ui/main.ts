@@ -2,13 +2,19 @@ import { DIMS, PRESETS, UNSPECIFIED } from '../core/rules';
 import type { CultureSetting, DimId } from '../core/rules';
 import { TERRAIN_NAMES, generateMap, isLand, siteScore, tilesWithin } from '../core/map';
 import './wikiView';
-import { DEFAULT_NPC_COUNT, DEFAULT_NPC_POPULATION, createWorld, deserialize, serialize, step } from '../core/sim';
+import { DEFAULT_NPC_COUNT, DEFAULT_NPC_POPULATION } from '../core/sim';
+import type { WorldConfig } from '../core/sim';
+import type { Params } from '../core/params';
 import { PLAYER, peopleOf } from '../core/nations';
 import { focusBanner } from './diplomacy';
 import { ERAS } from '../core/tech';
 import { formatDate } from '../core/events';
 import { personById } from '../core/person';
 import type { GameEvent, Tile, World, WorldMap } from '../core/types';
+import { SimClient } from './simClient';
+import type { Status } from './protocol';
+import { SAME_CULTURE, compareLabel, presetOptions } from './compare';
+import type { CompareState } from './compare';
 import { MapView, legendHtml } from './mapView';
 import type { Overlay } from './mapView';
 import { $, download, esc, pct } from './dom';
@@ -16,7 +22,7 @@ import { TABS } from './panels';
 import type { Ui } from './panels';
 
 const SAVE_KEY = 'civil.save.v1';
-const SPEEDS = [1, 2, 5, 10, 100];
+const SPEEDS = [1, 2, 5, 10, 100, 300];
 const WORDS = ['黄河', '昆仑', '长风', '星火', '青铜', '远古', '曙光', '大泽', '石林', '云梦', '沧海', '烽烟'];
 
 // ------------------------------------------------------------------ setup
@@ -126,51 +132,52 @@ $('#reroll').onclick = () => {
   regenerate();
 };
 $('#best-site').onclick = pickBestSite;
+$('#cmp-start').innerHTML += presetOptions(false);
 $('#start').onclick = () => {
   const seed = ($('#seed') as HTMLInputElement).value.trim() || randomSeed();
-  startGame(createWorld({ seed, culture: readCulture(), startTile, population: readPopulation(), ...readNpcs() }));
+  startGame({ cfg: { seed, culture: readCulture(), startTile, population: readPopulation(), ...readNpcs() } }, ($('#cmp-start') as HTMLSelectElement).value);
 };
 $('#load-local').onclick = () => {
-  try {
-    const s = localStorage.getItem(SAVE_KEY);
-    if (!s) return toast('没有找到存档');
-    startGame(deserialize(s));
-  } catch {
-    toast('读取存档失败');
-  }
+  const s = localStorage.getItem(SAVE_KEY);
+  if (!s) return toast('没有找到存档');
+  startGame({ json: s });
 };
 ($('#load-file') as HTMLInputElement).onchange = async (e) => {
-  const f = (e.target as HTMLInputElement).files?.[0];
+  const input = e.target as HTMLInputElement;
+  const f = input.files?.[0];
   if (!f) return;
-  try {
-    startGame(deserialize(await f.text()));
-  } catch {
-    toast('存档文件无法解析');
-  }
+  input.value = '';
+  startGame({ json: await f.text() });
 };
 buildDims();
 updateBandHint();
 regenerate();
 window.addEventListener('resize', () => {
   setupView.draw();
-  if (game) game.view.draw(game.ui.world);
+  if (game?.ui) game.view.draw(game.ui.world);
 });
 
 // ------------------------------------------------------------------- game
+// The World lives in a Worker (simWorker.ts); the screen shows a replica refreshed a few times a second.
+
+/** Minimum time between two snapshots while running, ms. */
+const SNAPSHOT_MS = 400;
+/** Snapshots are spaced so that receiving and drawing them takes at most this share of the main thread. */
+const SNAPSHOT_SHARE = 0.12;
 
 interface Game {
-  ui: Ui;
+  sim: SimClient;
+  /** Set once the Worker has built or loaded the world. */
+  ui?: Ui;
   view: MapView;
+  /** How this world was created; inferred for loaded saves (used to start a comparison run). */
+  cfg?: WorldConfig;
   running: boolean;
   speed: number;
   fastForward: boolean;
-  acc: number;
-  lastSeq: number;
-  lastPanel: number;
-  daysThisSecond: number;
-  rateStamp: number;
-  rate: number;
   modalQueue: GameEvent[];
+  cmp?: SimClient;
+  cmpStatsAt: number;
 }
 
 let game: Game | undefined;
@@ -184,9 +191,66 @@ function toast(msg: string): void {
   toastTimer = window.setTimeout(() => el.classList.add('hidden'), 2200);
 }
 
-function startGame(world: World): void {
+type Source = { cfg: WorldConfig } | { json: string };
+
+function startGame(src: Source, comparePreset = ''): void {
+  endGame();
   $('#setup').classList.add('hidden');
   $('#game').classList.remove('hidden');
+  $('#tb-date').textContent = '正在生成世界…';
+  $('#tb-era').textContent = '';
+  $('#tb-summary').textContent = '';
+  $('#tb-rate').textContent = '';
+  const sim = new SimClient();
+  const view = new MapView($('#map') as HTMLCanvasElement, (t) => {
+    const ui = game?.ui;
+    if (!ui) return;
+    // a settlement's centre opens the settlement; every other tile opens the tile panel
+    const s = ui.world.settlements.find((x) => x.alive && x.tile === t.id);
+    if (s) ui.select('settlement', s.id);
+    else ui.select('tile', t.id);
+  });
+  const g: Game = {
+    sim, view, cfg: 'cfg' in src ? src.cfg : undefined, running: false, speed: 1, fastForward: false, modalQueue: [], cmpStatsAt: 0,
+  };
+  game = g;
+  sim.handlers = {
+    onWorld: (w) => {
+      if (game !== g) return;
+      if (!g.ui) {
+        initGame(g, w);
+        if (comparePreset) g.ui!.startCompare(comparePreset, {});
+      } else {
+        g.ui.world = w;
+        if (g.modalQueue.length) showModal();
+        refresh();
+      }
+    },
+    onStatus: (st) => {
+      if (game !== g) return;
+      g.cmp?.runTo(st.day);
+      if (g.running && !st.pop) setRunning(false); // everyone died
+      topbar(st);
+    },
+    onMajor: (events) => {
+      if (game !== g) return;
+      g.modalQueue.push(...events);
+      setRunning(false);
+      showModal();
+    },
+    onError: (msg) => {
+      if (game !== g) return;
+      if (g.ui) return toast(`模拟出错：${msg}`);
+      toast('存档无法读取');
+      returnToSetup();
+    },
+  };
+  if ('cfg' in src) sim.create(src.cfg);
+  else sim.load(src.json);
+}
+
+function initGame(g: Game, world: World): void {
+  g.cfg ??= inferConfig(world);
   const ui: Ui = {
     world,
     tab: 'overview',
@@ -201,93 +265,151 @@ function startGame(world: World): void {
         switchTab('people');
       } else if (kind === 'tile') {
         ui.tileId = id;
-        if (game) {
-          game.view.selectedTile = id;
-          game.view.selectedSettlement = id >= 0 ? world.map.tiles[id].owner : -1;
-        }
+        g.view.selectedTile = id;
+        g.view.selectedSettlement = id >= 0 ? ui.world.map.tiles[id].owner : -1;
         switchTab('tile');
       } else {
         ui.settlementId = id;
-        if (game) {
-          game.view.selectedSettlement = id;
-          game.view.selectedTile = -1;
-        }
+        g.view.selectedSettlement = id;
+        g.view.selectedTile = -1;
         switchTab('settlement');
       }
-      refresh(true);
+      refresh();
     },
     toast,
+    issue: (cmd) => g.sim.issue(cmd),
+    startCompare: (preset, params) => startCompare(g, preset, params),
+    stopCompare: () => stopCompare(g),
   };
-  const view = new MapView($('#map') as HTMLCanvasElement, (t) => {
-    // a settlement's centre opens the settlement; every other tile opens the tile panel
-    const s = world.settlements.find((x) => x.alive && x.tile === t.id);
-    if (s) ui.select('settlement', s.id);
-    else ui.select('tile', t.id);
-  });
-  view.setMap(world.map);
-  $('#map-legend').innerHTML = legendHtml(view.overlay);
-  document.querySelectorAll<HTMLButtonElement>('#map-tools button').forEach((b) => b.classList.toggle('on', b.dataset.overlay === view.overlay));
-  game = {
-    ui, view, running: false, speed: 1, fastForward: false, acc: 0,
-    lastSeq: world.eventSeq, lastPanel: 0, daysThisSecond: 0, rateStamp: performance.now(), rate: 0, modalQueue: [],
-  };
+  g.ui = ui;
+  g.view.setMap(world.map);
+  $('#map-legend').innerHTML = legendHtml(g.view.overlay);
+  document.querySelectorAll<HTMLButtonElement>('#map-tools button').forEach((b) => b.classList.toggle('on', b.dataset.overlay === g.view.overlay));
   $('#speeds').innerHTML = SPEEDS.map((s) => `<button data-speed="${s}">${s}×</button>`).join('');
   buildTabs();
   setRunning(false);
   setSpeed(1);
-  refresh(true);
-  // dev hook for inspecting and fast-forwarding from the console
-  if (import.meta.env.DEV) Object.assign(window, { civil: { game, step, refresh } });
+  refresh();
+  // dev hook for inspecting from the console
+  if (import.meta.env.DEV) Object.assign(window, { civil: { game: g, refresh } });
+}
+
+/** A loaded save doesn't record how it was created; recover it from the founding events (polities that split off later don't count). */
+function inferConfig(w: World): WorldConfig {
+  const founded = w.events.filter((e) => e.day === 0 && e.title.endsWith('部落诞生')).map((e) => parseInt(e.text, 10));
+  return {
+    seed: w.seed,
+    culture: w.culture,
+    startTile: w.settlements[0]?.tile,
+    population: founded[0] > 0 ? founded[0] : 1000,
+    npcCount: founded.length ? founded.length - 1 : DEFAULT_NPC_COUNT,
+    npcPopulation: founded[1] > 0 ? founded[1] : DEFAULT_NPC_POPULATION,
+  };
+}
+
+function startCompare(g: Game, preset: string, params: Partial<Params>): void {
+  const ui = g.ui!;
+  stopCompare(g);
+  const base = g.cfg!;
+  const culture = preset === SAME_CULTURE ? base.culture : PRESETS.find((p) => p.id === preset)?.culture;
+  const cmp = new SimClient();
+  const state: CompareState = { label: compareLabel(preset, params), status: { day: 0, running: true, rate: 0, pop: 0 } };
+  cmp.handlers = {
+    onStatus: (st) => {
+      state.status = st;
+    },
+    onError: (msg) => toast(`对比局出错：${msg}`),
+  };
+  cmp.create({ ...base, culture, params: { ...base.params, ...params } }, true);
+  cmp.runTo(g.sim.status.day);
+  g.cmp = cmp;
+  g.cmpStatsAt = 0;
+  ui.compare = state;
+  toast(`对比局已开始：${state.label}`);
+}
+
+function stopCompare(g: Game): void {
+  g.cmp?.terminate();
+  g.cmp = undefined;
+  if (g.ui) g.ui.compare = undefined;
+}
+
+function endGame(): void {
+  if (!game) return;
+  game.sim.terminate();
+  game.cmp?.terminate();
+  game = undefined;
+  $('#modal').classList.add('hidden');
+  delete $('#tab-body').dataset.mounted;
+}
+
+function returnToSetup(): void {
+  endGame();
+  $('#game').classList.add('hidden');
+  $('#setup').classList.remove('hidden');
+  setupView.draw();
 }
 
 function buildTabs(): void {
   $('#tabs').innerHTML = TABS.map((t) => `<button data-tab="${t.id}">${t.name}</button>`).join('');
-  switchTab(game!.ui.tab);
+  switchTab(game!.ui!.tab);
 }
 
 function switchTab(id: string): void {
-  const g = game!;
+  const ui = game!.ui!;
   const tab = TABS.find((t) => t.id === id) ?? TABS[0];
-  const changed = g.ui.tab !== tab.id || !$('#tab-body').dataset.mounted;
-  g.ui.tab = tab.id;
+  const changed = ui.tab !== tab.id || !$('#tab-body').dataset.mounted;
+  ui.tab = tab.id;
   document.querySelectorAll<HTMLButtonElement>('#tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab.id));
   if (changed) {
     const body = $('#tab-body');
     body.dataset.mounted = tab.id;
     body.scrollTop = 0;
-    tab.mount(body, g.ui);
-    tab.update(body, g.ui);
+    tab.mount(body, ui);
+    tab.update(body, ui);
   }
 }
 
-function refresh(force = false): void {
+/** Date and speed come from the Worker's status; the rest from the replica. */
+function topbar(st: Status): void {
   const g = game;
-  if (!g) return;
+  if (!g?.ui) return;
   const w = g.ui.world;
   const l = personById(w, w.polity.leaderId);
-  $('#tb-date').textContent = formatDate(w.day);
+  $('#tb-date').textContent = formatDate(st.day);
   $('#tb-era').textContent = ERAS[w.era];
   $('#tb-summary').innerHTML = `${esc(w.polity.name)} · 人口 ${peopleOf(w, PLAYER).length} · 首领 ${l ? esc(l.name) : '—'} · 合法性 ${pct(w.polity.legitimacy)}`;
-  $('#tb-rate').textContent = g.running ? `实际 ${g.rate.toFixed(0)} 天/秒` : '';
-  const now = performance.now();
-  if (force || now - g.lastPanel > 400) {
-    g.lastPanel = now;
-    g.view.draw(w);
-    const banner = focusBanner(g.ui);
-    $('#focus-banner').innerHTML = banner;
-    $('#focus-banner').classList.toggle('hidden', !banner);
-    const tab = TABS.find((t) => t.id === g.ui.tab)!;
-    const body = $('#tab-body');
-    const top = body.scrollTop;
-    tab.update(body, g.ui);
-    body.scrollTop = top;
-  }
+  $('#tb-rate').textContent = g.running ? `实际 ${st.rate.toFixed(0)} 天/秒` : '';
+}
+
+/** Redraw the map, the open tab and the top bar from the current replica. */
+function refresh(): void {
+  const g = game;
+  const ui = g?.ui;
+  if (!g || !ui) return;
+  g.view.draw(ui.world);
+  const banner = focusBanner(ui);
+  $('#focus-banner').innerHTML = banner;
+  $('#focus-banner').classList.toggle('hidden', !banner);
+  const tab = TABS.find((t) => t.id === ui.tab)!;
+  const body = $('#tab-body');
+  const top = body.scrollTop;
+  tab.update(body, ui);
+  body.scrollTop = top;
+  topbar(g.sim.status);
+}
+
+function sendControl(g: Game): void {
+  g.sim.control(g.running, g.speed, g.fastForward);
+  // once paused, show exactly the state the Worker stopped at
+  if (!g.running) g.sim.requestSnapshot();
 }
 
 function setRunning(r: boolean): void {
   const g = game!;
   g.running = r;
   if (!r) g.fastForward = false;
+  sendControl(g);
   $('#pause').textContent = r ? '⏸ 暂停' : '▶ 继续';
   $('#ffwd').classList.toggle('on', g.fastForward);
 }
@@ -296,6 +418,7 @@ function setSpeed(s: number): void {
   const g = game!;
   g.speed = s;
   g.fastForward = false;
+  sendControl(g);
   document.querySelectorAll<HTMLButtonElement>('#speeds button').forEach((b) => b.classList.toggle('on', +b.dataset.speed! === s));
   $('#ffwd').classList.remove('on');
 }
@@ -307,7 +430,7 @@ function showModal(): void {
     $('#modal').classList.add('hidden');
     return;
   }
-  const w = g.ui.world;
+  const w = g.ui!.world;
   const people = ev.people.map((id) => personById(w, id)).filter(Boolean);
   $('#modal').innerHTML = `<div class="modal-box"><div class="when">${formatDate(ev.day)}${g.modalQueue.length > 1 ? ` · 还有 ${g.modalQueue.length - 1} 件` : ''}</div>
     <h2>${esc(ev.title)}</h2><p>${esc(ev.text)}</p>
@@ -325,53 +448,30 @@ function showModal(): void {
   };
 }
 
-let lastT = 0;
-
-function loop(t: number): void {
-  requestAnimationFrame(loop);
-  const dt = lastT ? Math.min(100, t - lastT) : 16;
-  lastT = t;
+function loop(): void {
+  const t = performance.now();
   const g = game;
-  if (!g) return;
-  const w = g.ui.world;
-  if (g.running && !g.modalQueue.length && w.people.length) {
-    const budget = g.fastForward ? 40 : 25;
-    const start = performance.now();
-    if (!g.fastForward) g.acc += (g.speed * dt) / 1000;
-    let steps = 0;
-    while ((g.fastForward || g.acc >= 1) && performance.now() - start < budget) {
-      step(w);
-      steps++;
-      if (!g.fastForward) g.acc -= 1;
-      if (w.eventSeq !== g.lastSeq) {
-        const fresh = w.events.filter((e) => e.seq >= g.lastSeq);
-        g.lastSeq = w.eventSeq;
-        const major = fresh.filter((e) => e.major);
-        if (major.length) {
-          g.modalQueue.push(...major);
-          setRunning(false);
-          showModal();
-          refresh(true);
-          break;
-        }
-      }
-    }
-    if (g.acc > g.speed) g.acc = g.speed; // don't build an unbounded backlog when the sim can't keep up
-    g.daysThisSecond += steps;
-    if (t - g.rateStamp > 1000) {
-      g.rate = (g.daysThisSecond * 1000) / (t - g.rateStamp);
-      g.daysThisSecond = 0;
-      g.rateStamp = t;
-    }
-    refresh();
+  if (!g?.ui) return;
+  const every = Math.max(SNAPSHOT_MS, g.sim.snapshotMs / SNAPSHOT_SHARE);
+  if (g.running && !g.sim.pending && t - g.sim.requested > every) g.sim.requestSnapshot();
+  // the comparison tab polls the other run's yearly statistics
+  if (g.cmp && g.ui.tab === 'compare' && t - g.cmpStatsAt > 1000) {
+    g.cmpStatsAt = t;
+    const cmp = g.cmp;
+    void cmp.stats().then((r) => {
+      if (game !== g || g.cmp !== cmp || !g.ui?.compare) return;
+      g.ui.compare.reply = r;
+      if (g.ui.tab === 'compare') refresh();
+    });
   }
 }
-requestAnimationFrame(loop);
+// a timer rather than animation frames, so a hidden page keeps its replica and comparison current
+setInterval(loop, 100);
 
 // ------------------------------------------------------------- controls
 
 document.addEventListener('keydown', (e) => {
-  if (!game || e.code !== 'Space') return;
+  if (!game?.ui || e.code !== 'Space') return;
   const tag = (e.target as HTMLElement).tagName;
   if (tag === 'INPUT' || tag === 'SELECT' || tag === 'TEXTAREA') return;
   e.preventDefault();
@@ -384,19 +484,20 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('click', (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>('[data-person],[data-settlement],[data-tile],[data-tab],[data-speed],[data-overlay]');
-  if (!el || !game) return;
-  if (el.dataset.unfocus) game.ui.focus = PLAYER;
+  const ui = game?.ui;
+  if (!el || !game || !ui) return;
+  if (el.dataset.unfocus) ui.focus = PLAYER;
   if (el.dataset.person !== undefined) {
     if ($('#modal').contains(el)) {
       game.modalQueue = [];
       showModal();
     }
-    game.ui.select('person', +el.dataset.person);
-  } else if (el.dataset.settlement !== undefined) game.ui.select('settlement', +el.dataset.settlement);
-  else if (el.dataset.tile !== undefined) game.ui.select('tile', +el.dataset.tile);
+    ui.select('person', +el.dataset.person);
+  } else if (el.dataset.settlement !== undefined) ui.select('settlement', +el.dataset.settlement);
+  else if (el.dataset.tile !== undefined) ui.select('tile', +el.dataset.tile);
   else if (el.dataset.tab) {
     switchTab(el.dataset.tab);
-    refresh(true);
+    refresh();
   } else if (el.dataset.speed) {
     setSpeed(+el.dataset.speed);
     setRunning(true);
@@ -404,37 +505,37 @@ document.addEventListener('click', (e) => {
     game.view.overlay = el.dataset.overlay as Overlay;
     $('#map-legend').innerHTML = legendHtml(game.view.overlay);
     document.querySelectorAll<HTMLButtonElement>('#map-tools button').forEach((b) => b.classList.toggle('on', b === el));
-    refresh(true);
+    refresh();
   }
 });
 
-$('#pause').onclick = () => game && setRunning(!game.running);
+$('#pause').onclick = () => game?.ui && setRunning(!game.running);
 $('#ffwd').onclick = () => {
-  if (!game) return;
-  game.fastForward = true;
-  game.running = true;
+  const g = game;
+  if (!g?.ui) return;
+  g.fastForward = true;
+  g.running = true;
+  sendControl(g);
   $('#pause').textContent = '⏸ 暂停';
   $('#ffwd').classList.add('on');
 };
-$('#save').onclick = () => {
-  if (!game) return;
+$('#save').onclick = async () => {
+  const g = game;
+  if (!g?.ui) return;
+  const json = await g.sim.serialize();
   try {
-    localStorage.setItem(SAVE_KEY, serialize(game.ui.world));
+    localStorage.setItem(SAVE_KEY, json);
     toast('已保存到浏览器');
   } catch {
     toast('浏览器存储空间不足，请使用"导出"');
   }
 };
-$('#export').onclick = () => {
-  if (!game) return;
-  download(`civil-${game.ui.world.seed}-${game.ui.world.day}.json`, serialize(game.ui.world));
+$('#export').onclick = async () => {
+  const g = game;
+  if (!g?.ui) return;
+  const json = await g.sim.serialize();
+  download(`civil-${g.ui.world.seed}-${g.sim.status.day}.json`, json);
 };
 $('#new-game').onclick = () => {
-  if (!game) return;
-  setRunning(false);
-  game = undefined;
-  $('#game').classList.add('hidden');
-  $('#setup').classList.remove('hidden');
-  delete $('#tab-body').dataset.mounted;
-  setupView.draw();
+  if (game) returnToSetup();
 };

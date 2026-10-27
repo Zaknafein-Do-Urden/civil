@@ -171,15 +171,21 @@ export function addBio(world: World, p: Person, text: string): void {
 }
 
 // Runtime id index, rebuilt automatically when the people array changes.
-const indexCache = new WeakMap<World, { arr: Person[]; len: number; map: Map<number, Person> }>();
+type PersonIndex = { arr: Person[]; len: number; map: Map<number, Person> };
+const indexCache = new WeakMap<World, PersonIndex>();
+// the last world looked up: daily loops call this for the same view thousands of times in a row
+let lastWorld: World | undefined;
+let lastIndex: PersonIndex | undefined;
 
 export function personById(world: World, id: number): Person | undefined {
   if (id < 0) return undefined;
-  let c = indexCache.get(world);
+  let c = world === lastWorld ? lastIndex : indexCache.get(world);
   if (!c || c.arr !== world.people || c.len !== world.people.length) {
     c = { arr: world.people, len: world.people.length, map: new Map(world.people.map((p) => [p.id, p])) };
     indexCache.set(world, c);
   }
+  lastWorld = world;
+  lastIndex = c;
   return c.map.get(id);
 }
 

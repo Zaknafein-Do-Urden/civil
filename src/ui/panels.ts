@@ -11,13 +11,12 @@ import { diagnose } from '../core/stats';
 import { popularSupport, weightedSupport } from '../core/politics';
 import { formatDate } from '../core/events';
 import { TERRAIN_NAMES, isLand, travelCosts } from '../core/map';
-import { issue } from '../core/sim';
 import { decodeTileSnapshot, tileCapacity } from '../core/tiles';
 import type { TileSnapshot } from '../core/tiles';
 import { has } from '../core/tech';
 import { season } from '../core/dmath';
 import { DAYS_PER_YEAR, NOCC, OCC, OCC_COLORS, OCC_NAMES } from '../core/types';
-import type { Person, World } from '../core/types';
+import type { Command, Person, World } from '../core/types';
 import { bar, esc, mini, pct } from './dom';
 import { drawChart } from './chart';
 import type { Series } from './chart';
@@ -25,8 +24,11 @@ import { settlementColor, stockRatio } from './mapView';
 import { PLAYER, polityOf, polityView } from '../core/nations';
 import { TIER_NAMES, levyObedience, localRuler, remitShare, tier } from '../core/control';
 import { diplomacy } from './diplomacy';
+import { compare } from './compare';
+import type { CompareState } from './compare';
 
 export interface Ui {
+  /** Read-only replica of the World, refreshed from the simulation Worker. */
   world: World;
   tab: string;
   personId: number;
@@ -37,6 +39,12 @@ export interface Ui {
   focus: number;
   select(kind: 'person' | 'settlement' | 'tile', id: number): void;
   toast(msg: string): void;
+  /** Queue a player command in the simulation Worker. */
+  issue(cmd: Command): void;
+  /** Side-by-side comparison run, if one is going (compare.ts). */
+  compare?: CompareState;
+  startCompare(preset: string, params: Partial<Params>): void;
+  stopCompare(): void;
 }
 
 export interface Tab {
@@ -168,7 +176,7 @@ const institutions: Tab = {
     dimSel.onchange = fillOpts;
     str.oninput = () => ((el.querySelector('#mv-str-v') as HTMLElement).textContent = `${str.value}%`);
     (el.querySelector('#mv-go') as HTMLButtonElement).onclick = () => {
-      issue(ui.world, { day: ui.world.day, type: 'movement', dim: +dimSel.value, opt: +optSel.value, strength: +str.value / 100 });
+      ui.issue({ day: ui.world.day, type: 'movement', dim: +dimSel.value, opt: +optSel.value, strength: +str.value / 100 });
       ui.toast('思潮将在下一天开始传播');
     };
   },
@@ -561,11 +569,11 @@ const params: Tab = {
     });
     (el.querySelector('#pa-apply') as HTMLButtonElement).onclick = () => {
       if (!Object.keys(draft).length) return;
-      issue(w, { day: w.day, type: 'params', params: { ...draft } });
+      ui.issue({ day: ui.world.day, type: 'params', params: { ...draft } });
       ui.toast('参数将在下一天生效');
     };
     (el.querySelector('#pa-reset') as HTMLButtonElement).onclick = () => {
-      issue(w, { day: w.day, type: 'params', params: { ...DEFAULT_PARAMS } });
+      ui.issue({ day: ui.world.day, type: 'params', params: { ...DEFAULT_PARAMS } });
       ui.toast('已恢复默认参数');
       setTimeout(() => this.mount(el, ui), 50);
     };
@@ -577,4 +585,4 @@ function fmt(v: number): string {
   return Math.abs(v) < 0.01 && v !== 0 ? v.toExponential(1) : String(+v.toFixed(4));
 }
 
-export const TABS: Tab[] = [overview, institutions, settlement, tileTab, people, tech, diplomacy, events, diagnosis, params];
+export const TABS: Tab[] = [overview, institutions, settlement, tileTab, people, tech, diplomacy, events, diagnosis, compare, params];

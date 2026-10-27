@@ -4,7 +4,6 @@ import { DIMS, optName } from '../core/rules';
 import { personById } from '../core/person';
 import { formatDate } from '../core/events';
 import { ERAS } from '../core/tech';
-import { issue } from '../core/sim';
 import { PLAYER, allPolities, peopleOf, polityColor, scopeOf } from '../core/nations';
 import { GOAL_NAMES, STATUS_NAMES, relation, warOutlook } from '../core/war';
 import type { Polity, World } from '../core/types';
@@ -43,11 +42,11 @@ export const diplomacy: Tab = {
       }
     });
     (el.querySelector('#dip-hawk') as HTMLButtonElement).onclick = () => {
-      issue(ui.world, { day: ui.world.day, type: 'warMood', value: 0.4 });
+      ui.issue({ day: ui.world.day, type: 'warMood', value: 0.4 });
       ui.toast('主战思潮将在下一天开始传播');
     };
     (el.querySelector('#dip-dove') as HTMLButtonElement).onclick = () => {
-      issue(ui.world, { day: ui.world.day, type: 'warMood', value: -0.4 });
+      ui.issue({ day: ui.world.day, type: 'warMood', value: -0.4 });
       ui.toast('主和思潮将在下一天开始传播');
     };
   },
