@@ -39,7 +39,7 @@ export function supervision(world: World, s: Settlement): number {
 
 /** Growing-season factor for a settlement's home tile on a given day (0 in winter). */
 export function growingFactor(world: World, s: Settlement, day: number): number {
-  const temp = world.map.tiles[s.tile].temp + 12 * season(day % DAYS_PER_YEAR);
+  const temp = world.map.tiles[s.tile].temp + world.params.climateShift + 12 * season(day % DAYS_PER_YEAR);
   return clamp((temp - 5) / 15, 0, 1) / 0.55;
 }
 

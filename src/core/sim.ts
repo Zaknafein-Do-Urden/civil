@@ -11,7 +11,7 @@ import { addBio, ageYears, createFounder, personById, surnameOf } from './person
 import { addEvent } from './events';
 import { charity, chooseJobs, dailySettlement, market, patronage, regenTiles } from './economy';
 import { exclusion, migrateLabor, updateLabor } from './labor';
-import { abandonEmpty, assignGuardian, claimTerritory, dailyDemography, marriages, rangeBudget, maybeFission, migrate, newSettlement } from './demography';
+import { abandonEmpty, assignGuardian, claimTerritory, dailyDemography, findSite, marriages, rangeBudget, maybeFission, migrate, newSettlement } from './demography';
 import {
   appointAdmins, chooseCouncil, chooseLeader, corruption, ensureLeader, institutionalChange, maybeElection, payAdmins,
   plannerMath, startMovement, unrest, updateActive, updateEnforcement, updateLegitimacy, updateMood, updatePracticed,
@@ -29,6 +29,7 @@ import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcC
 import { defaultOrders, diplomacyYearly, initRelations, playerDeclare, playerOrders, playerPeace, pushWarMood, warDemand, warMonthly } from './war';
 import { crossBorderMonthly } from './crossborder';
 import { decree, exempt, famineAppeal, relief, resolveDecision, settleOverdue } from './statecraft';
+import { newScenarioState, scenarioMonthly, startScenario, takeOver } from './scenarios';
 
 export interface WorldConfig {
   seed: string;
@@ -42,6 +43,12 @@ export interface WorldConfig {
   params?: Partial<Params>;
   /** The player answers decision cards (the game); otherwise the state settles them itself (headless runs). */
   decisions?: boolean;
+  /** Seed for the simulation's luck, if not the map seed. */
+  rngSeed?: string;
+  /** The player's people start spread over this many settlements. */
+  spread?: number;
+  /** Scenario id (scenarios.ts); default the open sandbox. */
+  scenario?: string;
 }
 
 /** Conservative defaults: every NPC is fully simulated, so total population roughly doubles. */
@@ -63,7 +70,8 @@ export function bestStartTile(world: World): number {
 }
 
 export function createWorld(cfg: WorldConfig): World {
-  const rng = new Rng(seedRng(cfg.seed));
+  // the map comes from `seed`; everything that happens afterwards from `rngSeed` (scenarios fix the map, not the luck)
+  const rng = new Rng(seedRng(cfg.rngSeed ?? cfg.seed));
   const culture = cfg.culture ?? UNSPECIFIED;
   const map = generateMap(cfg.seed);
   const world: World = {
@@ -84,6 +92,7 @@ export function createWorld(cfg: WorldConfig): World {
     decisions: [],
     decisionSeen: {},
     autoDecide: !cfg.decisions,
+    scenario: newScenarioState(cfg.scenario),
     notables: [],
     tileHistory: emptyTileHistory(),
     npcs: [],
@@ -94,7 +103,7 @@ export function createWorld(cfg: WorldConfig): World {
 
   const pop = cfg.population ?? 1000;
   const start = cfg.startTile !== undefined && isLand(map.tiles[cfg.startTile]) ? cfg.startTile : bestStartTile(world);
-  inPolity(world, PLAYER, (v) => foundTribe(v, rng, start, pop));
+  inPolity(world, PLAYER, (v) => foundTribe(v, rng, start, pop, cfg.spread));
 
   // NPC tribes elsewhere on the map, same rules, their own cultures (DESIGN.md §12.3)
   const home = map.tiles[start];
@@ -109,22 +118,29 @@ export function createWorld(cfg: WorldConfig): World {
     inPolity(world, id, (v) => foundTribe(v, rng, site, npcPop));
   }
   initRelations(world);
+  startScenario(world);
   world.rng = rng.state;
   return world;
 }
 
 /** A tribe starts as a single camp on the start tile; runs on the polity's view. */
-function foundTribe(world: World, rng: Rng, start: number, pop: number): void {
+function foundTribe(world: World, rng: Rng, start: number, pop: number, spread = 1): void {
   // The whole tribe starts as one camp; it splits on its own once food runs short (maybeFission)
   const first = newSettlement(world, rng, start);
   const bands = [first];
+  // a scenario may start with a people already spread over many settlements around the capital
+  for (let i = 1; i < spread; i++) {
+    const site = findSite(world, start, 3, 16);
+    if (site < 0) break;
+    bands.push(newSettlement(world, rng, site));
+  }
   if (pop < SMALL_GROUP) {
     foundHouseholds(world, rng, first.id, pop);
   } else {
-    for (let i = 0; i < pop; i++) world.people.push(createFounder(world, rng, first.id));
+    for (let i = 0; i < pop; i++) world.people.push(createFounder(world, rng, bands[i % bands.length].id));
     formFamilies(world, rng);
   }
-  first.food = 90 * pop * world.params.foodNeedAdult; // three months of stores
+  for (const b of bands) b.food = (90 * pop * world.params.foodNeedAdult) / bands.length; // three months of stores
   world.polity.capital = first.id;
   if (!world.polity.name) world.polity.name = world.polity.id === PLAYER ? `${first.name}部落` : polityName(rng, takenNames(world));
 
@@ -241,6 +257,7 @@ function applyCommands(world: World, rng: Rng): void {
     else if (c.type === 'declare') playerDeclare(world, c.target, c.goal);
     else if (c.type === 'orders') playerOrders(world, c.war, c.orders);
     else if (c.type === 'peace') playerPeace(world, rng, c.war, c.terms);
+    else if (c.type === 'takeover') takeOver(world, c.polity);
     else if (c.type === 'decree') inPolity(world, PLAYER, (v) => decree(v, c.dim, c.opt));
     else if (c.type === 'relief') inPolity(world, PLAYER, (v) => relief(v, v.settlements[c.settlement], true));
     else if (c.type === 'exempt') inPolity(world, PLAYER, (v) => exempt(v, v.settlements[c.settlement], c.years));
@@ -265,6 +282,7 @@ export function step(world: World): void {
     crossBorderMonthly(world, rng);
     warMonthly(world, rng);
     diseaseMonthly(world, rng);
+    scenarioMonthly(world);
   }
   if (world.day % DAYS_PER_YEAR === 0) {
     forEachPolity(world, (v) => yearly(v, rng));
@@ -458,6 +476,7 @@ export function deserialize(json: string): World {
   w.decisions ??= [];
   w.decisionSeen ??= {};
   w.autoDecide ??= false;
+  w.scenario ??= newScenarioState(); // saves from before scenarios
   return w;
 }
 

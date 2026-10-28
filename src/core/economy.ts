@@ -82,7 +82,7 @@ export function taxRate(world: World, s: Settlement): number {
 }
 
 function tileTempToday(world: World, temp: number): number {
-  return temp + 12 * season(world.day % DAYS_PER_YEAR);
+  return temp + world.params.climateShift + 12 * season(world.day % DAYS_PER_YEAR);
 }
 
 /** Occupations a settlement can currently support. */
@@ -648,7 +648,7 @@ export function targetCounts(world: World, rng: Rng, s: Settlement, people: Pers
   const day = Math.max(1, hrs / n);
   const toolDemand = n / (120 * dur) + Math.max(0, n * 0.3 - s.tools) / 120;
   t[OCC.tool] = toolDemand / Math.max(0.001, P.toolRate * stoneFactor(world, s) * day);
-  const coldClimate = clamp((12 - world.map.tiles[s.tile].temp) / 15, 0.15, 1);
+  const coldClimate = clamp((12 - world.map.tiles[s.tile].temp - world.params.climateShift) / 15, 0.15, 1);
   const clothesDemand = (people.length / 200) * coldClimate + Math.max(0, people.length * 0.2 - s.clothes) / 200;
   t[OCC.tailor] = clothesDemand / Math.max(0.001, P.clothesRate * (has(world, 'bone_needle') ? 1.5 : 1) * day);
   const surplus = clamp(foodDays / 60 - 0.5, 0, 1);
@@ -873,7 +873,7 @@ export function regenTiles(world: World): void {
   const sd = season(world.day % DAYS_PER_YEAR);
   for (const t of world.map.tiles) {
     if (t.plantsCap <= 0 && t.gameCap <= 0 && t.fishCap <= 0) continue;
-    const temp = t.temp + 12 * sd;
+    const temp = t.temp + P.climateShift + 12 * sd;
     const g = clamp((temp - 2) / 15, 0, 1) * (0.4 + 0.6 * t.rain);
     // farmland displaces wild plants and game
     const wild = t.maxPlots > 0 ? 1 - (t.plots / Math.max(1, t.maxPlots)) * 0.7 : 1;

@@ -1,3 +1,5 @@
 node_modules
 dist
 *.csv
+scripts/calibration/checkpoint*
+scripts/calibration-log.txt

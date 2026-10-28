@@ -19,6 +19,8 @@ import { MapView, legendHtml } from './mapView';
 import type { Overlay } from './mapView';
 import { $, download, esc, pct } from './dom';
 import { TABS } from './panels';
+import { SCENARIOS, scenarioById } from '../core/scenarios';
+import { drawReviewChart, goalSummary, reviewHtml } from './goals';
 import type { Ui } from './panels';
 
 const SAVE_KEY = 'civil.save.v1';
@@ -30,7 +32,7 @@ const WORDS = ['黄河', '昆仑', '长风', '星火', '青铜', '远古', '曙�
 let setupMap: WorldMap | undefined;
 let startTile = -1;
 const setupView = new MapView($('#setup-map') as HTMLCanvasElement, (t) => {
-  if (!isLand(t)) return;
+  if (!isLand(t) || ($('#seed') as HTMLInputElement).disabled) return; // a scenario fixes the start
   startTile = t.id;
   setupView.selectedTile = t.id;
   setupView.draw();
@@ -133,9 +135,37 @@ $('#reroll').onclick = () => {
 };
 $('#best-site').onclick = pickBestSite;
 $('#cmp-start').innerHTML += presetOptions(false);
+/** A scenario fixes the map and the start; the setup fields show its values and are locked. */
+function applyScenario(): void {
+  const sc = scenarioById(($('#scenario') as HTMLSelectElement).value);
+  $('#scenario-desc').textContent = sc.desc;
+  const locked = sc.id !== 'sandbox';
+  const c = sc.config;
+  const set = (id: string, v: string | number | undefined) => {
+    const el = $(id) as HTMLInputElement;
+    if (v !== undefined) el.value = String(v);
+    el.disabled = locked;
+  };
+  set('#seed', c.seed);
+  set('#population', c.population);
+  set('#npc-count', c.npcCount);
+  set('#npc-pop', c.npcPopulation);
+  ($('#reroll') as HTMLButtonElement).disabled = locked;
+  updateBandHint();
+  if (locked) regenerate();
+}
+
+($('#scenario') as HTMLSelectElement).innerHTML = SCENARIOS.map((s) => `<option value="${s.id}">${s.name}</option>`).join('');
+($('#scenario') as HTMLSelectElement).onchange = applyScenario;
+applyScenario();
+
 $('#start').onclick = () => {
   const seed = ($('#seed') as HTMLInputElement).value.trim() || randomSeed();
-  startGame({ cfg: { seed, culture: readCulture(), startTile, population: readPopulation(), ...readNpcs() } }, ($('#cmp-start') as HTMLSelectElement).value);
+  const sc = scenarioById(($('#scenario') as HTMLSelectElement).value);
+  const scen = sc.id === 'sandbox' ? {} : {
+    scenario: sc.id, rngSeed: randomSeed(), spread: sc.config.spread, params: sc.config.params,
+  };
+  startGame({ cfg: { seed, culture: sc.config.culture ?? readCulture(), startTile, population: readPopulation(), ...readNpcs(), ...scen } }, ($('#cmp-start') as HTMLSelectElement).value);
 };
 $('#load-local').onclick = () => {
   const s = localStorage.getItem(SAVE_KEY);
@@ -181,6 +211,10 @@ interface Game {
   deferred: Set<number>;
   /** Decision on screen, so a fresh replica does not redraw it. */
   shown: number;
+  /** End day of the scenario whose review has been shown. */
+  reviewed: number;
+  /** Waiting for the player to click a settlement whose polity to take over. */
+  picking: boolean;
   cmp?: SimClient;
   cmpStatsAt: number;
 }
@@ -210,6 +244,7 @@ function startGame(src: Source, comparePreset = ''): void {
   const view = new MapView($('#map') as HTMLCanvasElement, (t) => {
     const ui = game?.ui;
     if (!ui) return;
+    if (game!.picking) return pickPolity(game!, t);
     // a settlement's centre opens the settlement; every other tile opens the tile panel
     const s = ui.world.settlements.find((x) => x.alive && x.tile === t.id);
     if (s) ui.select('settlement', s.id);
@@ -217,7 +252,7 @@ function startGame(src: Source, comparePreset = ''): void {
   });
   const g: Game = {
     sim, view, cfg: 'cfg' in src ? src.cfg : undefined, running: false, speed: 1, fastForward: false, modalQueue: [], cmpStatsAt: 0,
-    answered: new Set(), deferred: new Set(), shown: -1,
+    answered: new Set(), deferred: new Set(), shown: -1, reviewed: -1, picking: false,
   };
   game = g;
   sim.handlers = {
@@ -228,7 +263,7 @@ function startGame(src: Source, comparePreset = ''): void {
         if (comparePreset) g.ui!.startCompare(comparePreset, {});
       } else {
         g.ui.world = w;
-        if (g.modalQueue.length || openDecisions(g).length) showModal();
+        if (g.modalQueue.length || openDecisions(g).length || reviewDue(g)) showModal();
         refresh();
       }
     },
@@ -288,6 +323,7 @@ function initGame(g: Game, world: World): void {
     stopCompare: () => stopCompare(g),
   };
   g.ui = ui;
+  if (world.scenario.status !== 'playing') g.reviewed = world.scenario.endDay;
   g.view.setMap(world.map);
   $('#map-legend').innerHTML = legendHtml(g.view.overlay);
   document.querySelectorAll<HTMLButtonElement>('#map-tools button').forEach((b) => b.classList.toggle('on', b.dataset.overlay === g.view.overlay));
@@ -384,7 +420,8 @@ function topbar(st: Status): void {
   const l = personById(w, w.polity.leaderId);
   $('#tb-date').textContent = formatDate(st.day);
   $('#tb-era').textContent = ERAS[w.era];
-  $('#tb-summary').innerHTML = `${esc(w.polity.name)} · 人口 ${peopleOf(w, PLAYER).length} · 首领 ${l ? esc(l.name) : '—'} · 合法性 ${pct(w.polity.legitimacy)}`;
+  const goal = goalSummary(w);
+  $('#tb-summary').innerHTML = `${esc(w.polity.name)} · 人口 ${peopleOf(w, PLAYER).length} · 首领 ${l ? esc(l.name) : '—'} · 合法性 ${pct(w.polity.legitimacy)}${goal ? ` · <a class="link" data-tab="goals">${esc(goal)}</a>` : ''}`;
   $('#tb-rate').textContent = g.running ? `实际 ${st.rate.toFixed(0)} 天/秒` : '';
   const waiting = w.decisions.filter((d) => !g.answered.has(d.id)).length;
   $('#tb-decisions').textContent = `待决 ${waiting}`;
@@ -447,6 +484,8 @@ function showModal(): void {
     return;
   }
   g.shown = -1;
+  g.modalQueue = g.modalQueue.filter((e) => e.title !== '剧本完成' && e.title !== '剧本失败');
+  if (reviewDue(g)) return showReview(g);
   const ev = g.modalQueue[0];
   if (!ev) {
     $('#modal').classList.add('hidden');
@@ -468,6 +507,49 @@ function showModal(): void {
     showModal();
     setRunning(true);
   };
+}
+
+function reviewDue(g: Game): boolean {
+  const st = g.ui?.world.scenario;
+  return !!st && st.status !== 'playing' && g.reviewed !== st.endDay;
+}
+
+function showReview(g: Game): void {
+  const w = g.ui!.world;
+  g.reviewed = w.scenario.endDay;
+  $('#modal').innerHTML = reviewHtml(w);
+  $('#modal').classList.remove('hidden');
+  drawReviewChart($('#rv-chart') as HTMLCanvasElement, w);
+  const close = () => {
+    $('#modal').classList.add('hidden');
+    showModal();
+  };
+  const stay = $('#modal').querySelector<HTMLButtonElement>('#rv-stay');
+  if (stay) stay.onclick = close;
+  const watch = $('#modal').querySelector<HTMLButtonElement>('#rv-watch');
+  if (watch) watch.onclick = close;
+  $('#rv-pick').onclick = () => {
+    g.picking = true;
+    $('#map-hint').textContent = '选择接手的国家：点击地图上任意一个其他国家的聚落';
+    close();
+    toast('点击地图上的一个聚落');
+  };
+}
+
+/** After a defeat: the clicked settlement's polity becomes the player's. */
+function pickPolity(g: Game, t: Tile): void {
+  const w = g.ui!.world;
+  const s = w.settlements.find((x) => x.alive && x.tile === t.id) ?? (t.owner >= 0 ? w.settlements[t.owner] : undefined);
+  if (!s?.alive) return toast('这里没有聚落');
+  if (s.polity === PLAYER) return toast('这已经是你的国家');
+  const pol = w.npcs[s.polity - 1]?.polity;
+  if (!pol?.alive) return;
+  if (!confirm(`接手${s.name}所属的${pol.name}？`)) return;
+  g.picking = false;
+  $('#map-hint').textContent = '点击聚落中心查看聚落，点击其他任何地块查看地块详情';
+  g.sim.issue({ day: w.day, type: 'takeover', polity: s.polity });
+  g.sim.requestSnapshot();
+  toast(`你接手了${pol.name}`);
 }
 
 function showDecision(g: Game, dec: Decision): void {
@@ -533,9 +615,10 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('click', (e) => {
-  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-person],[data-settlement],[data-tile],[data-tab],[data-speed],[data-overlay]');
+  const el = (e.target as HTMLElement).closest<HTMLElement>('[data-person],[data-settlement],[data-tile],[data-tab],[data-speed],[data-overlay],[data-review]');
   const ui = game?.ui;
   if (!el || !game || !ui) return;
+  if (el.dataset.review) return showReview(game);
   if (el.dataset.unfocus) ui.focus = PLAYER;
   if (el.dataset.person !== undefined) {
     if ($('#modal').contains(el)) {

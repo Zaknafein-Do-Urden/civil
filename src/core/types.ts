@@ -338,9 +338,28 @@ export type Command =
   /** War: declare on a neighbour; set our side's orders in a war; offer peace terms. */
   | { day: number; type: 'declare'; target: number; goal: 'raid' | 'land' }
   | { day: number; type: 'orders'; war: number; orders: WarOrders }
-  | { day: number; type: 'peace'; war: number; terms: PeaceTerms };
+  | { day: number; type: 'peace'; war: number; terms: PeaceTerms }
+  /** After a defeat: become the will of another polity (scenarios.ts). */
+  | { day: number; type: 'takeover'; polity: number };
 
 export type PeaceTerms = 'white' | 'tribute' | 'cede' | 'submit';
+
+export interface ScenarioState {
+  id: string;
+  /** 'playing' until won or failed; afterwards the game goes on as a sandbox. */
+  status: 'playing' | 'won' | 'failed';
+  /** Day it was won or lost, or -1. */
+  endDay: number;
+  outcome: string;
+  /** Milestones reached, with the day. */
+  milestones: Record<string, number>;
+  /** Numbers recorded along the way (starting population, population in a given year…). */
+  marks: Record<string, number>;
+  /** Settlements the player held at the start. */
+  initial: number[];
+  /** Polity ids the player has taken over after a defeat, oldest first. */
+  takeovers: number[];
+}
 
 export type DecisionKind = 'secession' | 'skim' | 'famine' | 'reform' | 'war' | 'peace' | 'sack';
 
@@ -502,6 +521,8 @@ export interface World {
   decisionSeen: Record<string, number>;
   /** Settle the player's decisions as the state would by itself (headless runs, comparison runs). */
   autoDecide: boolean;
+  /** The scenario being played and how it stands (scenarios.ts). */
+  scenario: ScenarioState;
   notables: NotableRecord[];
   /** Yearly per-tile resource/ownership snapshots, last 100 years (tiles.ts). */
   tileHistory: TileHistory;

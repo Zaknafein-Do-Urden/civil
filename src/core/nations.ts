@@ -59,7 +59,7 @@ export function polityColor(p: Polity, light = 55): string {
   return `hsl(${p.hue.toFixed(0)} 70% ${light}%)`;
 }
 
-function copyScope(dst: PolityScope, src: PolityScope): void {
+export function copyScope(dst: PolityScope, src: PolityScope): void {
   dst.polity = src.polity;
   dst.culture = src.culture;
   dst.tech = src.tech;

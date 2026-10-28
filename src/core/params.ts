@@ -80,6 +80,7 @@ export interface Params {
   tributeRate: number;
   conquestMassacre: number;
   secession: number;
+  climateShift: number;
   decisionDays: number;
   decreeCooldown: number;
   decreeCost: number;
@@ -166,6 +167,7 @@ export const DEFAULT_PARAMS: Params = {
   tributeRate: 0.1,
   conquestMassacre: 1,
   secession: 1,
+  climateShift: 0,
   decisionDays: 60,
   decreeCooldown: 360,
   decreeCost: 0.3,
@@ -261,6 +263,7 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'vassalThreshold', name: '附庸门槛', desc: '执行力低于「执行门槛」但不低于此值的聚落是附庸：自行其是，只交名义贡赋；再低就是化外之地', min: 0, max: 0.6, step: 0.05 },
   { key: 'vassalTribute', name: '附庸贡赋', desc: '附庸收上来的税中交给中央的比例', min: 0, max: 0.6, step: 0.05 },
   { key: 'secession', name: '分离倾向', desc: '管不到的聚落每年独立或投靠邻国的倾向倍数；0 表示从不分离', min: 0, max: 3, step: 0.1 },
+  { key: 'climateShift', name: '气候偏移', desc: '所有地块的气温加上这么多摄氏度（负值为变冷）：影响植物生长、作物生长季、寒冷与衣物需求', min: -5, max: 5, step: 0.1 },
   { key: 'decisionDays', name: '裁决期限', desc: '待决事项等玩家裁决的天数；过期按惯例（NPC 的做法）处理', min: 10, max: 360, step: 10 },
   { key: 'decreeCooldown', name: '法令间隔', desc: '两道改制法令之间至少相隔的天数', min: 0, max: 1800, step: 30 },
   { key: 'decreeCost', name: '强推代价', desc: '强行改制或压下改革时，合法性损失＝此值 ×（0.1 + 掌权者中反对者领先的加权支持度）', min: 0, max: 1, step: 0.05 },

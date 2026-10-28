@@ -26,6 +26,7 @@ import { PLAYER, polityOf, polityView } from '../core/nations';
 import { TIER_NAMES, levyObedience, localRuler, remitShare, tier } from '../core/control';
 import { diplomacy } from './diplomacy';
 import { compare } from './compare';
+import { goals } from './goals';
 import type { CompareState } from './compare';
 
 export interface Ui {
@@ -685,4 +686,4 @@ function fmt(v: number): string {
   return Math.abs(v) < 0.01 && v !== 0 ? v.toExponential(1) : String(+v.toFixed(4));
 }
 
-export const TABS: Tab[] = [overview, institutions, settlement, tileTab, people, tech, diplomacy, events, diagnosis, compare, params];
+export const TABS: Tab[] = [overview, goals, institutions, settlement, tileTab, people, tech, diplomacy, events, diagnosis, compare, params];
