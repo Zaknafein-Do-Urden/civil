@@ -201,6 +201,8 @@ export interface Settlement {
   immunity: number;
   /** Quality of stone bought from foreign neighbours, 0..1; fades monthly (crossborder.ts). */
   importStone: number;
+  /** No tax is collected here before this day (an exemption granted by the state, statecraft.ts). */
+  taxFreeUntil: number;
 }
 
 export interface Polity {
@@ -232,6 +234,8 @@ export interface Polity {
   factionSeq: number;
   /** Per dimension: the option whose reform was last vetoed, or -1 (so a standing veto is reported once). */
   vetoed: number[];
+  /** Day of the player's last decree, or -1 (statecraft.ts). */
+  lastDecree: number;
 }
 
 /** A political faction (party once there are elections): people with shared stances and identities. */
@@ -273,6 +277,7 @@ export type EventKind =
   | 'movement'
   | 'war'
   | 'diplomacy'
+  | 'decision'
   | 'misc';
 
 export interface GameEvent {
@@ -323,7 +328,36 @@ export interface YearStats {
 export type Command =
   | { day: number; type: 'movement'; dim: number; opt: number; strength: number }
   | { day: number; type: 'params'; params: Partial<Params> }
-  | { day: number; type: 'warMood'; value: number };
+  | { day: number; type: 'warMood'; value: number }
+  /** Answer a pending decision (statecraft.ts). */
+  | { day: number; type: 'decide'; id: number; choice: string }
+  /** Decrees: change an institution outright; open the granary to a settlement; exempt one from tax. */
+  | { day: number; type: 'decree'; dim: number; opt: number }
+  | { day: number; type: 'relief'; settlement: number }
+  | { day: number; type: 'exempt'; settlement: number; years: number };
+
+export type DecisionKind = 'secession' | 'skim' | 'famine' | 'reform';
+
+/**
+ * A moment where the state (the player) must choose: raised by the simulation where it would otherwise
+ * decide by itself, and settled by the player's answer or, once the deadline passes, by `auto`.
+ */
+export interface Decision {
+  /** Seq of the event that announced it. */
+  id: number;
+  kind: DecisionKind;
+  day: number;
+  due: number;
+  title: string;
+  text: string;
+  settlement: number;
+  people: number[];
+  options: { id: string; name: string; desc: string }[];
+  /** What the state would do left to itself (what NPC polities do). */
+  auto: string;
+  /** Kind-specific: secession [polity to join or -1]; reform [dim, new option, old option]. */
+  data: number[];
+}
 
 export interface NotableRecord {
   id: number;
@@ -442,6 +476,12 @@ export interface World {
   eventSeq: number;
   pending: Command[];
   commandLog: Command[];
+  /** Decisions waiting for the player (statecraft.ts). */
+  decisions: Decision[];
+  /** Last day a decision of each kind was raised or settled, by `kind:subject`. */
+  decisionSeen: Record<string, number>;
+  /** Settle the player's decisions as the state would by itself (headless runs, comparison runs). */
+  autoDecide: boolean;
   notables: NotableRecord[];
   /** Yearly per-tile resource/ownership snapshots, last 100 years (tiles.ts). */
   tileHistory: TileHistory;

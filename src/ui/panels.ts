@@ -8,8 +8,8 @@ import { DOMAIN_NAMES, ENV_NAMES, ERAS, TECHS, envFlags, prereqsMet } from '../c
 import type { Domain } from '../core/tech';
 import { foodNeed, wealth } from '../core/economy';
 import { diagnose } from '../core/stats';
-import { popularSupport, weightedSupport } from '../core/politics';
-import { checkingBody, leaderBacking, platformText } from '../core/factions';
+import { popularSupport, suppressCost, weightedSupport } from '../core/politics';
+import { checkingBody, factionIndex, leaderBacking, platformText, voteRow } from '../core/factions';
 import { formatDate } from '../core/events';
 import { TERRAIN_NAMES, isLand, travelCosts } from '../core/map';
 import { decodeTileSnapshot, tileCapacity } from '../core/tiles';
@@ -163,6 +163,12 @@ const institutions: Tab = {
       <h3 data-wiki="factions">派系</h3><div id="inst-factions"></div>
       <h3 data-wiki="mobility">社会流动</h3><div id="inst-mobility"></div><canvas class="chart" id="ch-mobility"></canvas>
       <h3>各聚落执行情况</h3><div id="inst-settlements"></div>
+      <div id="dc-box"><h3 data-wiki="decrees">颁布法令</h3>
+      <p class="muted small">以国家意志直接改制，不等掌权者同意。有制衡时须经否决机构表决；通过后按掌权者中的反对程度损失合法性，偏爱旧制的人不满上升。掌权者日后仍可能要求改回来。</p>
+      <div class="field-row"><label>维度 <select id="dc-dim">${DIMS.map((d, i) => `<option value="${i}">${d.name}</option>`).join('')}</select></label></div>
+      <div class="field-row"><label>改为 <select id="dc-opt"></select></label></div>
+      <p class="small" id="dc-preview"></p>
+      <button id="dc-go" class="primary">颁布</button></div>
       <div id="mv-box"><h3>推动思潮</h3>
       <p class="muted small">让一部分理想主义者开始鼓吹某个选项。其他人会按各自利益决定支持还是反对，结果可能是改革、被否决或引发革命。</p>
       <div class="field-row"><label>维度 <select id="mv-dim">${DIMS.map((d, i) => `<option value="${i}">${d.name}</option>`).join('')}</select></label></div>
@@ -178,6 +184,19 @@ const institutions: Tab = {
     fillOpts();
     dimSel.onchange = fillOpts;
     str.oninput = () => ((el.querySelector('#mv-str-v') as HTMLElement).textContent = `${str.value}%`);
+    const dcDim = el.querySelector('#dc-dim') as HTMLSelectElement;
+    const dcOpt = el.querySelector('#dc-opt') as HTMLSelectElement;
+    const fillDc = () => {
+      dcOpt.innerHTML = DIMS[+dcDim.value].options.map((o, i) => `<option value="${i}">${o.name} — ${o.desc}</option>`).join('');
+      decreePreview(el, ui);
+    };
+    fillDc();
+    dcDim.onchange = fillDc;
+    dcOpt.onchange = () => decreePreview(el, ui);
+    (el.querySelector('#dc-go') as HTMLButtonElement).onclick = () => {
+      ui.issue({ day: ui.world.day, type: 'decree', dim: +dcDim.value, opt: +dcOpt.value });
+      ui.toast('法令将在下一天颁布');
+    };
     (el.querySelector('#mv-go') as HTMLButtonElement).onclick = () => {
       ui.issue({ day: ui.world.day, type: 'movement', dim: +dimSel.value, opt: +optSel.value, strength: +str.value / 100 });
       ui.toast('思潮将在下一天开始传播');
@@ -186,6 +205,8 @@ const institutions: Tab = {
   update(el, ui) {
     const w = view(ui);
     (el.querySelector('#mv-box') as HTMLElement).style.display = ui.focus === PLAYER ? '' : 'none';
+    (el.querySelector('#dc-box') as HTMLElement).style.display = ui.focus === PLAYER ? '' : 'none';
+    if (ui.focus === PLAYER) decreePreview(el, ui);
     const ws = weightedSupport(w);
     const ps = popularSupport(w);
     el.querySelector('#inst-list')!.innerHTML = DIMS.map((d, di) => {
@@ -229,6 +250,42 @@ const institutions: Tab = {
   },
 };
 
+/** What a decree would cost and whether it would pass, from the current replica. */
+function decreePreview(el: HTMLElement, ui: Ui): void {
+  const w = polityView(ui.world, PLAYER);
+  const pol = w.polity;
+  const d = +(el.querySelector('#dc-dim') as HTMLSelectElement).value;
+  const opt = +(el.querySelector('#dc-opt') as HTMLSelectElement).value;
+  const cur = pol.institutions[d];
+  const go = el.querySelector('#dc-go') as HTMLButtonElement;
+  const out = el.querySelector('#dc-preview') as HTMLElement;
+  const wait = pol.lastDecree >= 0 ? pol.lastDecree + w.params.decreeCooldown - w.day : 0;
+  let block = '';
+  if (!pol.active[d]) block = '这一维度还没有成为需要回答的问题（休眠）。';
+  else if (opt === cur) block = '这就是现行制度。';
+  else if (wait > 0) block = `上一道法令推行未久，${wait} 天后才能再颁布。`;
+  go.disabled = !!block;
+  if (block) {
+    out.innerHTML = `<span class="muted">${block}</span>`;
+    return;
+  }
+  const sup = weightedSupport(w)[d];
+  const cost = suppressCost(w, sup[cur] - sup[opt]);
+  const body = checkingBody(w);
+  let vote = '无制衡，法令必定施行。';
+  if (body && body.members.length) {
+    const fx = factionIndex(w);
+    let yes = 0;
+    for (const p of body.members) {
+      const r = voteRow(w, fx, p, d);
+      if (r[opt] > r[cur]) yes++;
+    }
+    const no = body.members.length - yes;
+    vote = `${body.name}预计 ${yes} 对 ${no}，${yes > no ? '能通过' : '<span style="color:var(--warn)">会被否决（合法性 −3%）</span>'}。`;
+  }
+  out.innerHTML = `掌权者加权支持：新制 ${pct(sup[opt])}，旧制 ${pct(sup[cur])}。预计合法性 −${pct(cost)}（现为 ${pct(pol.legitimacy)}）。${vote}`;
+}
+
 /** Who can veto reforms and remove the leader, and how much of that body the leader's faction holds. */
 function checkText(w: World): string {
   const body = checkingBody(w);
@@ -252,6 +309,13 @@ const settlement: Tab = {
       el.innerHTML = `<p class="muted">在地图上点击一个聚落，或从下表选择。</p><table class="list"><tr><th>聚落</th><th>人口</th><th>地形</th><th>建立</th></tr>${rows.join('')}</table>`;
       return;
     }
+    el.onclick = (e) => {
+      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+      if (act === 'relief') ui.issue({ day: ui.world.day, type: 'relief', settlement: s.id });
+      else if (act === 'exempt') ui.issue({ day: ui.world.day, type: 'exempt', settlement: s.id, years: 5 });
+      else return;
+      ui.toast('法令将在下一天施行');
+    };
     const people = w.people.filter((p) => p.settlement === s.id);
     const tile = w.map.tiles[s.tile];
     let pl = 0, pc = 0, gm = 0, gc = 0, fs = 0, fc = 0, plots = 0, maxPlots = 0;
@@ -284,6 +348,7 @@ const settlement: Tab = {
       <div class="muted small">建于${formatDate(s.founded)} · ${TERRAIN_NAMES[tile.terrain]} · 年均 ${tile.temp.toFixed(0)}°C · ${tile.river ? '河畔' : ''}${tile.coast ? '海滨' : ''}</div>
       <div class="muted small">民族：${ethnicText || '—'}</div>
       <div class="muted small" data-wiki="control">管辖：<b>${TIER_NAMES[tier(w, s)]}</b>（执行力 ${pct(s.enforcement)}，税收上交中央 ${pct(remitShare(w, s))}，征兵应召 ${pct(levyObedience(w, s))}）${localRuler(w, s) ? ` · ${roleName(localRuler(w, s)!)}：${personLink(w, localRuler(w, s)!.id)}` : s.origin !== s.polity ? ' · 镇守暂缺' : ''}${s.skimmed > 0.5 ? ` · 去年截留 ${s.skimmed.toFixed(0)} 食物` : ''}</div>
+      ${s.polity === PLAYER ? `<div class="small decree-row">法令：<button data-act="relief" title="从国库和都城粮仓调最多 60 天口粮">开仓赈济</button>${s.id === w.polity.capital ? '' : ' <button data-act="exempt" title="免去当地 5 年赋税，当地不满下降，分离意愿大减">免税 5 年</button>'}${s.taxFreeUntil > w.day ? ` <span class="muted">免税至${formatDate(s.taxFreeUntil)}</span>` : ''}</div>` : ''}
       ${s.epidemic > 0 ? `<div class="small" style="color:var(--warn)">${esc(s.epiName)}正在流行，已有 ${s.epiDeaths} 人病死</div>` : s.immunity > 0.3 ? `<div class="muted small">多数人得过上一场疫病，暂时免疫（${pct(s.immunity)}）</div>` : ''}
       <div class="kpis" style="margin-top:6px">
         <div class="kpi"><div class="k">人口</div><div class="v">${people.length}</div></div>

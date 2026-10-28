@@ -10,7 +10,7 @@ import { focusBanner } from './diplomacy';
 import { ERAS } from '../core/tech';
 import { formatDate } from '../core/events';
 import { personById } from '../core/person';
-import type { GameEvent, Tile, World, WorldMap } from '../core/types';
+import type { Decision, GameEvent, Tile, World, WorldMap } from '../core/types';
 import { SimClient } from './simClient';
 import type { Status } from './protocol';
 import { SAME_CULTURE, compareLabel, presetOptions } from './compare';
@@ -176,6 +176,11 @@ interface Game {
   speed: number;
   fastForward: boolean;
   modalQueue: GameEvent[];
+  /** Decisions answered (the replica may not know yet) and put off for later. */
+  answered: Set<number>;
+  deferred: Set<number>;
+  /** Decision on screen, so a fresh replica does not redraw it. */
+  shown: number;
   cmp?: SimClient;
   cmpStatsAt: number;
 }
@@ -212,6 +217,7 @@ function startGame(src: Source, comparePreset = ''): void {
   });
   const g: Game = {
     sim, view, cfg: 'cfg' in src ? src.cfg : undefined, running: false, speed: 1, fastForward: false, modalQueue: [], cmpStatsAt: 0,
+    answered: new Set(), deferred: new Set(), shown: -1,
   };
   game = g;
   sim.handlers = {
@@ -222,7 +228,7 @@ function startGame(src: Source, comparePreset = ''): void {
         if (comparePreset) g.ui!.startCompare(comparePreset, {});
       } else {
         g.ui.world = w;
-        if (g.modalQueue.length) showModal();
+        if (g.modalQueue.length || openDecisions(g).length) showModal();
         refresh();
       }
     },
@@ -380,6 +386,9 @@ function topbar(st: Status): void {
   $('#tb-era').textContent = ERAS[w.era];
   $('#tb-summary').innerHTML = `${esc(w.polity.name)} · 人口 ${peopleOf(w, PLAYER).length} · 首领 ${l ? esc(l.name) : '—'} · 合法性 ${pct(w.polity.legitimacy)}`;
   $('#tb-rate').textContent = g.running ? `实际 ${st.rate.toFixed(0)} 天/秒` : '';
+  const waiting = w.decisions.filter((d) => !g.answered.has(d.id)).length;
+  $('#tb-decisions').textContent = `待决 ${waiting}`;
+  $('#tb-decisions').classList.toggle('hidden', !waiting);
 }
 
 /** Redraw the map, the open tab and the top bar from the current replica. */
@@ -423,8 +432,21 @@ function setSpeed(s: number): void {
   $('#ffwd').classList.remove('on');
 }
 
+/** Decisions waiting for the player that are neither answered nor put off. */
+function openDecisions(g: Game): Decision[] {
+  return g.ui ? g.ui.world.decisions.filter((d) => !g.answered.has(d.id) && !g.deferred.has(d.id)) : [];
+}
+
+/** Decision cards come first; their announcing events are shown as the cards themselves. */
 function showModal(): void {
   const g = game!;
+  g.modalQueue = g.modalQueue.filter((e) => e.kind !== 'decision');
+  const dec = openDecisions(g)[0];
+  if (dec) {
+    if (g.shown !== dec.id || $('#modal').classList.contains('hidden')) showDecision(g, dec);
+    return;
+  }
+  g.shown = -1;
   const ev = g.modalQueue[0];
   if (!ev) {
     $('#modal').classList.add('hidden');
@@ -445,6 +467,34 @@ function showModal(): void {
     g.modalQueue = [];
     showModal();
     setRunning(true);
+  };
+}
+
+function showDecision(g: Game, dec: Decision): void {
+  const w = g.ui!.world;
+  g.shown = dec.id;
+  const more = openDecisions(g).length - 1 + g.modalQueue.length;
+  const people = dec.people.map((id) => personById(w, id)).filter(Boolean);
+  const place = dec.settlement >= 0 ? `<a class="link" data-settlement="${dec.settlement}">${esc(w.settlements[dec.settlement]?.name ?? '')}</a> · ` : '';
+  $('#modal').innerHTML = `<div class="modal-box decision"><div class="when">${place}待决 · ${formatDate(dec.day)} 提出，${formatDate(dec.due)} 前不裁决则按惯例处理${more > 0 ? ` · 还有 ${more} 件` : ''}</div>
+    <h2>${esc(dec.title)}</h2><p>${esc(dec.text)}</p>
+    ${people.length ? `<p class="small">相关人物：${people.map((p) => `<a class="link" data-person="${p!.id}">${esc(p!.name)}</a>`).join('、')}</p>` : ''}
+    <div class="choices">${dec.options.map((o) => `<button class="choice" data-choice="${esc(o.id)}"><b>${esc(o.name)}</b>${o.id === dec.auto ? ' <span class="tag">惯例</span>' : ''}<span class="small">${esc(o.desc)}</span></button>`).join('')}</div>
+    <div class="actions"><button id="m-later" class="ghost">稍后再定</button></div></div>`;
+  $('#modal').classList.remove('hidden');
+  $('#modal').querySelectorAll<HTMLButtonElement>('[data-choice]').forEach((b) => {
+    b.onclick = () => {
+      const opt = dec.options.find((o) => o.id === b.dataset.choice)!;
+      g.sim.issue({ day: w.day, type: 'decide', id: dec.id, choice: opt.id });
+      g.answered.add(dec.id);
+      toast(`已裁决：${opt.name}`);
+      showModal();
+      topbar(g.sim.status);
+    };
+  });
+  $('#m-later').onclick = () => {
+    g.deferred.add(dec.id);
+    showModal();
   };
 }
 
@@ -510,6 +560,13 @@ document.addEventListener('click', (e) => {
 });
 
 $('#pause').onclick = () => game?.ui && setRunning(!game.running);
+$('#tb-decisions').onclick = () => {
+  const g = game;
+  if (!g?.ui) return;
+  g.deferred.clear();
+  g.shown = -1;
+  showModal();
+};
 $('#ffwd').onclick = () => {
   const g = game;
   if (!g?.ui) return;

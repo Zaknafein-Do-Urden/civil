@@ -279,6 +279,7 @@ export function newSettlement(world: World, rng: Rng, tile: number): Settlement 
     epiName: '',
     immunity: 0,
     importStone: 0,
+    taxFreeUntil: -1,
   };
   world.settlements.push(s);
   claimTerritory(world, s);

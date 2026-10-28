@@ -118,6 +118,7 @@ function checkMajor(w: World): boolean {
 
 function start(w: World): void {
   world = w;
+  w.autoDecide = quiet; // the player answers decision cards; comparison runs decide as the state would
   lastSeq = w.eventSeq;
   running = false;
   acc = 0;

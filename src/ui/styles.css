@@ -192,3 +192,10 @@ a[data-wiki] { color: var(--accent); }
   #wiki-nav { width: auto; max-height: 30vh; border-right: 0; border-bottom: 1px solid var(--border); }
 }
 #focus-banner { padding: 6px 10px; background: var(--panel-2); border-bottom: 1px solid var(--border); font-size: 12px; }
+.modal-box.decision { width: min(600px, calc(100vw - 32px)); }
+.choices { display: flex; flex-direction: column; gap: 8px; margin: 10px 0; }
+.choice { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left; padding: 8px 10px; }
+.choice b { color: var(--accent-2); }
+.choice .small { color: var(--muted); white-space: normal; }
+.decree-row { margin-top: 4px; }
+.decree-row button { padding: 1px 8px; font-size: 12px; }

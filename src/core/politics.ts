@@ -5,12 +5,13 @@ import { ALLOC, AUTH, CHECKS, D, DIMS, LAND, OCCSEL, SPEECH, SUCC, TAX_RATES, op
 import { checkingBody, factionIndex, leaderBacking, voteRow, voterTest } from './factions';
 import { addBio, ageYears, personById } from './person';
 import { addEvent } from './events';
+import { asked, playerDecides, propose } from './decisions';
 import { travelCosts } from './map';
 import { has } from './tech';
 import { foodNeed, settlementAverages, wealth } from './economy';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, OCC } from './types';
-import type { Person, Settlement, World } from './types';
+import type { Decision, Person, Settlement, World } from './types';
 
 const COUNCIL_SIZE = 7;
 
@@ -18,7 +19,7 @@ export function leader(world: World): Person | undefined {
   return personById(world, world.polity.leaderId);
 }
 
-function adults(world: World): Person[] {
+export function adults(world: World): Person[] {
   return world.people.filter((p) => ageYears(world, p) >= ADULT_AGE);
 }
 
@@ -598,6 +599,25 @@ export function institutionalChange(world: World): void {
       }
       vote = `，${body.name}以 ${yes} 对 ${no} 通过`;
     }
+    if (playerDecides(world, pol.id)) {
+      // the state (the player) signs off on the reform, or holds it back at a price
+      if (!asked(world, 'reform', d, REFORM_RETRY_YEARS * DAYS_PER_YEAR)) {
+        const margin = row[best] - row[cur];
+        propose(world, {
+          kind: 'reform', settlement: -1, people: [pol.leaderId], auto: 'approve', data: [d, best, cur],
+          title: `${DIMS[d].name}改为「${optName(DIMS[d].id, best)}」`,
+          text: `${how}${vote}，提议${change}（加权支持 ${pct(row[best])} 对 ${pct(row[cur])}）。${camps}`,
+          options: [
+            { id: 'approve', name: '批准', desc: `${change}。${DIMS[d].options[best].desc}。` },
+            {
+              id: 'reject', name: '压下',
+              desc: `维持「${optName(DIMS[d].id, cur)}」。合法性约 −${pct(suppressCost(world, margin))}，支持改革的人不满上升；${REFORM_RETRY_YEARS} 年内不会再提。`,
+            },
+          ],
+        });
+      }
+      continue;
+    }
     pol.vetoed[d] = -1;
     pol.institutions[d] = best;
     addEvent(world, 'reform', true, `改革：${DIMS[d].name}`,
@@ -606,8 +626,43 @@ export function institutionalChange(world: World): void {
   }
 }
 
+const REFORM_RETRY_YEARS = 3;
+
+/** Legitimacy lost by forcing the state's will against those in power, by how far they lean the other way. */
+export function suppressCost(world: World, margin: number): number {
+  return world.params.decreeCost * (0.1 + clamp(margin, 0, 1));
+}
+
+/** People who preferred `wanted` over what they got resent it, by how much. */
+export function resent(world: World, d: number, wanted: number, got: number): void {
+  for (const p of adults(world)) {
+    const diff = p.prefs[d][wanted] - p.prefs[d][got];
+    if (diff > 0) p.grievance = clamp(p.grievance + diff * 0.3, 0, 1);
+  }
+}
+
+/** The player's answer to a reform card (runs on the player's view). */
+export function resolveReform(world: World, dec: Decision, choice: string): void {
+  const pol = world.polity;
+  const [d, best, cur] = dec.data;
+  if (pol.institutions[d] !== cur) return; // overtaken by events
+  const change = `${DIMS[d].name}由「${optName(DIMS[d].id, cur)}」改为「${optName(DIMS[d].id, best)}」`;
+  if (choice === 'approve') {
+    pol.vetoed[d] = -1;
+    pol.institutions[d] = best;
+    addEvent(world, 'reform', false, `改革：${DIMS[d].name}`, `批准了改革：${change}。`, [pol.leaderId]);
+    return;
+  }
+  const sup = weightedSupport(world)[d];
+  const cost = suppressCost(world, sup[best] - sup[cur]);
+  pol.legitimacy = clamp(pol.legitimacy - cost, 0, 1);
+  resent(world, d, best, cur);
+  addEvent(world, 'reform', false, `压下改革：${DIMS[d].name}`,
+    `掌权者想把${change}，被压了下来。合法性 −${pct(cost)}，支持改革的人愤愤不平。`, [pol.leaderId]);
+}
+
 /** Which factions back a change and which oppose it. */
-function factionCamps(world: World, d: number, to: number, from: number): string {
+export function factionCamps(world: World, d: number, to: number, from: number): string {
   const pro: string[] = [];
   const con: string[] = [];
   for (const f of world.polity.factions) {

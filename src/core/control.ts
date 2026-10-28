@@ -7,7 +7,8 @@
 
 import { clamp } from './dmath';
 import { addBio, ageYears, personById } from './person';
-import { ADULT_AGE } from './types';
+import { asked, playerDecides, propose } from './decisions';
+import { ADULT_AGE, DAYS_PER_YEAR } from './types';
 import type { Person, Settlement, World } from './types';
 
 export type Tier = 'core' | 'province' | 'vassal' | 'fringe';
@@ -53,6 +54,7 @@ export function levyObedience(world: World, s: Settlement): number {
 
 /** Collection works wherever someone local collects; beyond reach hardly anything is taken. */
 export function collection(world: World, s: Settlement): number {
+  if (s.taxFreeUntil > world.day) return 0; // exempted by the state
   const v = world.params.vassalThreshold;
   return s.enforcement >= v ? 1 : clamp(s.enforcement / Math.max(0.01, v), 0, 1);
 }
@@ -115,4 +117,46 @@ export function updateLocalRulers(world: World, groups: Person[][]): void {
     addBio(world, pick, sons[0] ? `继承父位，成为${s.name}的头人` : `成为${s.name}的头人，名义上听命于${pol.name}`);
     s.chief = pick.id;
   }
+  if (playerDecides(world, pol.id)) reportSkimming(world);
+}
+
+const SKIM_DAYS = 10;
+const SKIM_RETRY_YEARS = 5;
+
+/** The headman who kept the most for his family last year, if it was a lot, comes before the player. */
+function reportSkimming(world: World): void {
+  let worst: Settlement | undefined;
+  for (const s of world.settlements) {
+    if (!s.alive || s.skimmed < s.pop * world.params.foodNeedAdult * SKIM_DAYS) continue;
+    const c = personById(world, s.chief);
+    if (!c || c.role !== 'chief' || c.settlement !== s.id) continue;
+    if (asked(world, 'skim', s.id, SKIM_RETRY_YEARS * DAYS_PER_YEAR)) continue;
+    if (!worst || s.skimmed > worst.skimmed) worst = s;
+  }
+  if (!worst) return;
+  const s = worst;
+  const c = personById(world, s.chief)!;
+  const odds = probeOdds(world, s);
+  propose(world, {
+    kind: 'skim', settlement: s.id, people: [c.id], auto: 'tolerate', data: [],
+    title: `${s.name}头人${c.name}中饱私囊`,
+    text: `${s.name}是${TIER_NAMES[tier(world, s)]}，税收大多留在当地。去年头人${c.name}为自家截留了约 ${Math.round(s.skimmed)} 食物当量，` +
+      `相当于当地每人 ${Math.round(s.skimmed / Math.max(1, s.pop))} 天的口粮。`,
+    options: [
+      {
+        id: 'probe', name: '查办',
+        desc: `查抄他的家产归国库，撤去头人之位。成功率约 ${Math.round(odds * 100)}%（取决于政令能否到达和首领威信）；失败则他抗命不从，当地不满上升，合法性 −5%。`,
+      },
+      {
+        id: 'governor', name: '派镇守接管',
+        desc: `从核心选一个人带家眷常驻${s.name}，此后按核心对待：赋税全数上交，兵员全数听调。当地人受外人管束，怨恨逐年累积。`,
+      },
+      { id: 'tolerate', name: '默许', desc: '睁一只眼闭一只眼。言论不受管控时，民众看在眼里，合法性小幅下降。' },
+    ],
+  });
+}
+
+/** Chance that an order to bring a headman to account is carried out. */
+export function probeOdds(world: World, s: Settlement): number {
+  return clamp(s.enforcement + world.polity.legitimacy * 0.5, 0.1, 0.95);
 }

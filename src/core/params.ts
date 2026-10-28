@@ -80,6 +80,9 @@ export interface Params {
   tributeRate: number;
   conquestMassacre: number;
   secession: number;
+  decisionDays: number;
+  decreeCooldown: number;
+  decreeCost: number;
   vassalThreshold: number;
   vassalTribute: number;
   campaignDays: number;
@@ -163,6 +166,9 @@ export const DEFAULT_PARAMS: Params = {
   tributeRate: 0.1,
   conquestMassacre: 1,
   secession: 1,
+  decisionDays: 60,
+  decreeCooldown: 360,
+  decreeCost: 0.3,
   vassalThreshold: 0.2,
   vassalTribute: 0.15,
   campaignDays: 30,
@@ -255,6 +261,9 @@ export const PARAM_DEFS: ParamDef[] = [
   { key: 'vassalThreshold', name: '附庸门槛', desc: '执行力低于「执行门槛」但不低于此值的聚落是附庸：自行其是，只交名义贡赋；再低就是化外之地', min: 0, max: 0.6, step: 0.05 },
   { key: 'vassalTribute', name: '附庸贡赋', desc: '附庸收上来的税中交给中央的比例', min: 0, max: 0.6, step: 0.05 },
   { key: 'secession', name: '分离倾向', desc: '管不到的聚落每年独立或投靠邻国的倾向倍数；0 表示从不分离', min: 0, max: 3, step: 0.1 },
+  { key: 'decisionDays', name: '裁决期限', desc: '待决事项等玩家裁决的天数；过期按惯例（NPC 的做法）处理', min: 10, max: 360, step: 10 },
+  { key: 'decreeCooldown', name: '法令间隔', desc: '两道改制法令之间至少相隔的天数', min: 0, max: 1800, step: 30 },
+  { key: 'decreeCost', name: '强推代价', desc: '强行改制或压下改革时，合法性损失＝此值 ×（0.1 + 掌权者中反对者领先的加权支持度）', min: 0, max: 1, step: 0.05 },
   { key: 'campaignDays', name: '出征天数', desc: '一次战役中参战者离家不劳动的天数（劫掠为三分之一，守方迎战约一半）', min: 0, max: 90, step: 5 },
   { key: 'woundRate', name: '负伤率', desc: '战斗中幸存的参战者负伤的比例；伤员健康下降 0.15～0.4，生产减少，健康过低不能再上阵', min: 0, max: 1, step: 0.05 },
   { key: 'tradeRange', name: '贸易距离', desc: '两国聚落相距多少格以内可以在边境集市交易（实际贸易量还随交通科技折算后的距离衰减）', min: 0, max: 20, step: 1 },

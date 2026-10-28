@@ -28,6 +28,7 @@ import type { Command, Person, World } from './types';
 import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName, takenNames } from './nations';
 import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
 import { crossBorderMonthly } from './crossborder';
+import { decree, exempt, famineAppeal, relief, resolveDecision, settleOverdue } from './statecraft';
 
 export interface WorldConfig {
   seed: string;
@@ -39,6 +40,8 @@ export interface WorldConfig {
   /** Starting population of each NPC tribe. */
   npcPopulation?: number;
   params?: Partial<Params>;
+  /** The player answers decision cards (the game); otherwise the state settles them itself (headless runs). */
+  decisions?: boolean;
 }
 
 /** Conservative defaults: every NPC is fully simulated, so total population roughly doubles. */
@@ -78,6 +81,9 @@ export function createWorld(cfg: WorldConfig): World {
     eventSeq: 0,
     pending: [],
     commandLog: [],
+    decisions: [],
+    decisionSeen: {},
+    autoDecide: !cfg.decisions,
     notables: [],
     tileHistory: emptyTileHistory(),
     npcs: [],
@@ -231,6 +237,10 @@ function applyCommands(world: World, rng: Rng): void {
     if (c.type === 'movement') inPolity(world, PLAYER, (v) => startMovement(v, rng, c.dim, c.opt, c.strength));
     else if (c.type === 'warMood') pushWarMood(world, PLAYER, c.value);
     else if (c.type === 'params') world.params = { ...world.params, ...c.params };
+    else if (c.type === 'decide') resolveDecision(world, rng, c.id, c.choice);
+    else if (c.type === 'decree') inPolity(world, PLAYER, (v) => decree(v, c.dim, c.opt));
+    else if (c.type === 'relief') inPolity(world, PLAYER, (v) => relief(v, v.settlements[c.settlement], true));
+    else if (c.type === 'exempt') inPolity(world, PLAYER, (v) => exempt(v, v.settlements[c.settlement], c.years));
     world.commandLog.push(c);
   }
 }
@@ -239,6 +249,7 @@ function applyCommands(world: World, rng: Rng): void {
 export function step(world: World): void {
   const rng = new Rng(world.rng);
   applyCommands(world, rng);
+  settleOverdue(world, rng);
   forEachPolity(world, (v) => daily(v, rng));
   regenTiles(world);
 
@@ -336,6 +347,7 @@ function monthly(world: World, rng: Rng, groups: Person[][]): void {
   }
   cultureMonthly(world, groups);
   abandonEmpty(world, groups);
+  famineAppeal(world);
 }
 
 function breakthroughs(world: World, rng: Rng, available: number[]): void {
@@ -425,17 +437,23 @@ export function deserialize(json: string): World {
     if (s.chief === undefined) Object.assign(s, { chief: -1, skimAcc: 0, skimmed: 0 });
     if (s.epidemic === undefined) Object.assign(s, { epidemic: 0, epiSeverity: 0, epiDeaths: 0, epiName: '', immunity: 0 });
     s.importStone ??= 0;
+    s.taxFreeUntil ??= -1;
   }
   // saves from before cross-border trade and marriage
   for (const sc of [w, ...w.npcs]) {
     sc.polity.imports ??= { copper: 0, tin: 0 };
     sc.polity.metals ??= { copper: 1, tin: 1 };
+    sc.polity.lastDecree ??= -1;
   }
   for (const r of w.relations) {
     if (r.trade === undefined) Object.assign(r, { trade: 0, tradeAcc: 0, marriages: 0, marriagesAcc: 0, migrants: 0, migrantsAcc: 0 });
   }
   for (const p of w.people) p.ethnicity ??= w.settlements[p.settlement].origin;
   w.tileHistory ??= emptyTileHistory(); // saves from before tile history
+  // saves from before decision cards
+  w.decisions ??= [];
+  w.decisionSeen ??= {};
+  w.autoDecide ??= false;
   return w;
 }
 

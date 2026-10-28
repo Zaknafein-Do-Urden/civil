@@ -209,6 +209,7 @@ export function newScope(rng: Rng, id: number, culture: CultureSetting): PolityS
       factions: [],
       factionSeq: 0,
       vetoed: DIMS.map(() => -1),
+      lastDecree: -1,
     },
     culture,
     tech: initTech(rng),
