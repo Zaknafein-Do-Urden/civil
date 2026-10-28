@@ -26,7 +26,7 @@ import { emptyTileHistory, recordTileHistory } from './tiles';
 import { ADULT_AGE, DAYS_PER_MONTH, DAYS_PER_YEAR, OCC } from './types';
 import type { Command, Person, World } from './types';
 import { PLAYER, emptyAcc, emptyYearAcc, forEachPolity, inPolity, newScope, npcCulture, npcSite, polityHue, polityName, takenNames } from './nations';
-import { diplomacyYearly, initRelations, pushWarMood, warDemand, warMonthly } from './war';
+import { defaultOrders, diplomacyYearly, initRelations, playerDeclare, playerOrders, playerPeace, pushWarMood, warDemand, warMonthly } from './war';
 import { crossBorderMonthly } from './crossborder';
 import { decree, exempt, famineAppeal, relief, resolveDecision, settleOverdue } from './statecraft';
 
@@ -238,6 +238,9 @@ function applyCommands(world: World, rng: Rng): void {
     else if (c.type === 'warMood') pushWarMood(world, PLAYER, c.value);
     else if (c.type === 'params') world.params = { ...world.params, ...c.params };
     else if (c.type === 'decide') resolveDecision(world, rng, c.id, c.choice);
+    else if (c.type === 'declare') playerDeclare(world, c.target, c.goal);
+    else if (c.type === 'orders') playerOrders(world, c.war, c.orders);
+    else if (c.type === 'peace') playerPeace(world, rng, c.war, c.terms);
     else if (c.type === 'decree') inPolity(world, PLAYER, (v) => decree(v, c.dim, c.opt));
     else if (c.type === 'relief') inPolity(world, PLAYER, (v) => relief(v, v.settlements[c.settlement], true));
     else if (c.type === 'exempt') inPolity(world, PLAYER, (v) => exempt(v, v.settlements[c.settlement], c.years));
@@ -449,6 +452,7 @@ export function deserialize(json: string): World {
     if (r.trade === undefined) Object.assign(r, { trade: 0, tradeAcc: 0, marriages: 0, marriagesAcc: 0, migrants: 0, migrantsAcc: 0 });
   }
   for (const p of w.people) p.ethnicity ??= w.settlements[p.settlement].origin;
+  for (const war of w.wars) war.orders ??= [defaultOrders(), defaultOrders()]; // saves from before war orders
   w.tileHistory ??= emptyTileHistory(); // saves from before tile history
   // saves from before decision cards
   w.decisions ??= [];

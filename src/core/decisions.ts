@@ -21,15 +21,15 @@ export function asked(world: World, kind: DecisionKind, subject: number, days: n
   return last !== undefined && world.day - last < days;
 }
 
-/** Settlement for most kinds; the dimension for reforms. */
-export function subjectOf(d: Decision): number {
-  return d.kind === 'reform' ? d.data[0] : d.settlement;
+/** Settlement for most kinds; the dimension for reforms, the target for wars, the war for peace. */
+export function subjectOf(d: Pick<Decision, 'kind' | 'data' | 'settlement'>): number {
+  return d.kind === 'reform' || d.kind === 'war' || d.kind === 'peace' ? d.data[0] : d.settlement;
 }
 
 /** Put a decision to the player; the announcing event pauses the game. */
 export function propose(world: World, d: Omit<Decision, 'id' | 'day' | 'due'>): void {
   const id = world.eventSeq;
   world.decisions.push({ ...d, id, day: world.day, due: world.day + world.params.decisionDays });
-  world.decisionSeen[seenKey(d.kind, d.kind === 'reform' ? d.data[0] : d.settlement)] = world.day;
+  world.decisionSeen[seenKey(d.kind, subjectOf(d))] = world.day;
   addEvent(world, 'decision', true, `待决：${d.title}`, d.text, d.people, d.settlement);
 }

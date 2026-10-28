@@ -12,7 +12,7 @@ import { probeOdds } from './control';
 import { asked, playerDecides, propose, seenKey, subjectOf } from './decisions';
 import { adults, factionCamps, resent, resolveReform, suppressCost, weightedSupport } from './politics';
 import { checkingBody, factionIndex, voteRow } from './factions';
-import { appointGovernor, resolveSecession } from './war';
+import { appointGovernor, resolveSecession, resolveWarCard } from './war';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR } from './types';
 import type { Decision, Settlement, World } from './types';
@@ -34,6 +34,7 @@ export function resolveDecision(world: World, rng: Rng, id: number, choice: stri
   else if (d.kind === 'reform') inPolity(world, PLAYER, (v) => resolveReform(v, d, choice));
   else if (d.kind === 'skim') inPolity(world, PLAYER, (v) => resolveSkim(v, rng, d, choice));
   else if (d.kind === 'famine') inPolity(world, PLAYER, (v) => resolveFamine(v, d, choice));
+  else resolveWarCard(world, d, choice);
 }
 
 /** Decisions left unanswered past their deadline are settled as the state would by itself. */

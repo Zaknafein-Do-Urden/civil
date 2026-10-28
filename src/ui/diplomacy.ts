@@ -5,8 +5,8 @@ import { personById } from '../core/person';
 import { formatDate } from '../core/events';
 import { ERAS } from '../core/tech';
 import { PLAYER, allPolities, peopleOf, polityColor, scopeOf } from '../core/nations';
-import { GOAL_NAMES, STATUS_NAMES, relation, warOutlook } from '../core/war';
-import type { Polity, World } from '../core/types';
+import { GOAL_NAMES, STATUS_NAMES, TERMS_NAMES, peaceAccepted, relation, warOutlook } from '../core/war';
+import type { PeaceTerms, Polity, War, World } from '../core/types';
 import { esc, pct } from './dom';
 import type { Tab, Ui } from './panels';
 
@@ -26,11 +26,32 @@ export const diplomacy: Tab = {
       <p class="muted small">各部落都按同一套规则模拟。宣战、议和、结盟由各自的制度决定（首领独断、议事会或大会按权力加权表决）。</p>
       <div id="dip-mood"></div>
       <div class="field-row"><button id="dip-hawk">推动主战思潮</button><button id="dip-dove">推动主和思潮</button></div>
+      <div id="dip-front"></div>
       <h4>各政体</h4><div id="dip-list"></div>
+      <div id="dip-declare"></div>
       <div id="dip-detail"></div>
       <h4>战争</h4><div id="dip-wars"></div></div>`;
     const root = el.querySelector('#dip') as HTMLElement;
+    root.addEventListener('change', (e) => {
+      const box = (e.target as HTMLElement).closest<HTMLElement>('[data-orders]');
+      if (!box) return;
+      const val = (k: string) => (box.querySelector(`[data-k="${k}"]`) as HTMLSelectElement).value;
+      ui.issue({ day: ui.world.day, type: 'orders', war: +box.dataset.orders!, orders: { target: +val('target'), levy: +val('levy'), hold: val('hold') === '1' } });
+      ui.toast('军令已下达');
+    });
     root.addEventListener('click', (e) => {
+      const act = (e.target as HTMLElement).closest<HTMLElement>('[data-declare],[data-peace]');
+      if (act?.dataset.declare !== undefined) {
+        const goal = (root.querySelector('#dip-goal') as HTMLSelectElement).value as 'raid' | 'land';
+        ui.issue({ day: ui.world.day, type: 'declare', target: +act.dataset.declare, goal });
+        ui.toast('宣战将在下一天生效');
+        return;
+      }
+      if (act?.dataset.peace !== undefined) {
+        ui.issue({ day: ui.world.day, type: 'peace', war: +act.dataset.war!, terms: act.dataset.peace as PeaceTerms });
+        ui.toast('使者已经出发');
+        return;
+      }
       const t = (e.target as HTMLElement).closest<HTMLElement>('[data-polity],[data-focus]');
       if (!t) return;
       if (t.dataset.polity !== undefined) {
@@ -109,6 +130,9 @@ export const diplomacy: Tab = {
       <table class="list"><tr><th>对方</th><th>状态</th><th>好感</th><th>贸易额/年</th><th>通婚 / 移民</th><th>往来</th><th>边界摩擦</th><th>积怨</th><th>主战度</th></tr>${rels}</table>
       <p class="muted small">贸易额是去年边境集市上双向成交的货值（食物当量），通婚与移民是去年跨国嫁娶和投奔的人数（鼠标悬停看今年至今）。往来由这些真实的流动决定；好感由文化相似度、往来、边界摩擦和积怨决定；主战度是本国按权力加权的开战意愿，超过 50% 就可能宣战。</p>`;
 
+    front(el, w);
+    declareBox(el, w, p, outlook.find((o) => o.from === PLAYER && o.to === p.id)?.support);
+
     const wars = [...w.wars].reverse().slice(0, 30).map((x) => {
       const yrs = ((x.end < 0 ? w.day : x.end) - x.start) / 360;
       return `<div class="event ${x.end < 0 ? 'major' : ''}"><div class="when">${formatDate(x.start)}${x.end < 0 ? ' 起，进行中' : ' — ' + formatDate(x.end)}（${yrs.toFixed(1)} 年）</div>
@@ -119,6 +143,65 @@ export const diplomacy: Tab = {
     el.querySelector('#dip-wars')!.innerHTML = wars || '<p class="muted">尚无战争</p>';
   },
 };
+
+const LEVIES: [number, string][] = [[0.4, '轻（四成壮丁）'], [0.8, '中（八成，惯例）'], [1, '全面（全部壮丁，怨声载道）']];
+let frontKey = '';
+
+/** Our wars: standing orders and peace terms. Redrawn only when something changes, so open menus survive refreshes. */
+function front(el: HTMLElement, w: World): void {
+  const mine = w.wars.filter((x) => x.end < 0 && (x.attacker === PLAYER || x.defender === PLAYER));
+  const box = el.querySelector('#dip-front') as HTMLElement;
+  const odds = mine.map((x) => (['white', 'tribute', 'cede', 'submit'] as PeaceTerms[]).map((t) => peaceAccepted(w, x, t)));
+  const key = JSON.stringify(mine.map((x, i) => [x.id, x.orders, w.settlements.filter((s) => s.alive && s.polity === enemyOf(x)).map((s) => s.id), odds[i].map((o) => o.ok)]));
+  if (key === frontKey && box.innerHTML) return;
+  frontKey = key;
+  if (!mine.length) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = `<h4>我方战事</h4>${mine.map((x, i) => {
+    const side = x.attacker === PLAYER ? 0 : 1;
+    const o = x.orders[side];
+    const enemy = enemyOf(x);
+    const targets = w.settlements.filter((s) => s.alive && s.polity === enemy);
+    const will = odds[i][0].enemyWill;
+    return `<div class="event major" data-orders="${x.id}"><div class="title">对 ${pname(w, enemy)} · ${GOAL_NAMES[x.goal]} · ${formatDate(x.start)}起</div>
+      <div class="small">阵亡 我 ${x.deaths[side]} : 敌 ${x.deaths[1 - side]}；攻克 ${x.conquests[side]} : ${x.conquests[1 - side]}；对方仍主战 ${pct(will)}；军力比 ${odds[i][0].ratio.toFixed(1)}</div>
+      <div class="field-row small">
+        <label>进攻目标 <select data-k="target"><option value="-1">最近的敌方聚落</option>${targets.map((s) => `<option value="${s.id}" ${o.target === s.id ? 'selected' : ''}>${esc(s.name)}（${s.pop} 人）</option>`).join('')}</select></label>
+        <label>动员 <select data-k="levy">${LEVIES.map(([v, n]) => `<option value="${v}" ${Math.abs(o.levy - v) < 0.01 ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+        <label>姿态 <select data-k="hold"><option value="0">进攻</option><option value="1" ${o.hold ? 'selected' : ''}>固守（不出击，守城 +30%）</option></select></label>
+      </div>
+      <div class="field-row small">议和：${(['white', 'tribute', 'cede', 'submit'] as PeaceTerms[]).map((t, k) => `<button data-war="${x.id}" data-peace="${t}" title="${odds[i][k].ok ? '对方大概会接受' : '对方大概会拒绝'}">${TERMS_NAMES[t]}${odds[i][k].ok ? ' ✓' : ''}</button>`).join(' ')}</div>
+    </div>`;
+  }).join('')}<p class="muted small">✓ 表示按对方现在的厌战程度大概会接受。要求称臣或割地，需要对方厌战且我方军力至少是对方的 1.5 倍；我方称臣总会被接受，但首领威信受损。</p>`;
+}
+
+function enemyOf(x: War): number {
+  return x.attacker === PLAYER ? x.defender : x.attacker;
+}
+
+/** Declaring war on the selected polity. */
+function declareBox(el: HTMLElement, w: World, p: Polity, support: number | undefined): void {
+  const box = el.querySelector('#dip-declare') as HTMLElement;
+  const rel = p.id === PLAYER ? undefined : relation(w, PLAYER, p.id);
+  const ok = p.alive && rel && rel.status !== 'none' && rel.status !== 'war';
+  const key = ok ? `${p.id}:${rel!.status}` : '';
+  if (box.dataset.key === key) {
+    const sup = box.querySelector('#dip-sup');
+    if (sup) sup.textContent = support === undefined ? '—' : pct(support);
+    return;
+  }
+  box.dataset.key = key;
+  if (!ok) {
+    box.innerHTML = '';
+    return;
+  }
+  box.innerHTML = `<div class="field-row small"><b>对${dot(p)} ${esc(p.name)}宣战</b>
+    <label>目标 <select id="dip-goal"><option value="land">扩张（攻城略地）</option><option value="raid">抢粮（劫掠）</option></select></label>
+    <button data-declare="${p.id}">宣战</button>
+    <span class="muted">我方掌权者主战 <b id="dip-sup">${support === undefined ? '—' : pct(support)}</b>；不到 50% 是不得人心的战争（损失合法性、士气低落）${rel!.status === 'alliance' ? '；背弃盟约，合法性再 −10%' : ''}${rel!.status === 'peace' && w.day < rel!.truceUntil ? '；违背停战约定，合法性 −5%' : ''}</span></div>`;
+}
 
 function metal(supply: number, imported: number): string {
   if (supply >= 1) return '自产';

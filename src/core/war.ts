@@ -16,7 +16,7 @@ import { PLAYER, allPolities, inPolity, newScope, polityName, polityOf, polityVi
 import { UNSPECIFIED } from './rules';
 import type { Rng } from './rng';
 import { ADULT_AGE, DAYS_PER_YEAR, OCC } from './types';
-import type { Decision, Person, Polity, Relation, Settlement, Tile, War, World } from './types';
+import type { Decision, PeaceTerms, Person, Polity, Relation, Settlement, Tile, War, WarOrders, World } from './types';
 
 const TRUCE_YEARS = 10;
 const ASSIMILATE_YEARS = 50;
@@ -374,7 +374,9 @@ export function diplomacyYearly(world: World, rng: Rng): void {
       const sup = warSupport(world, X, m, Y.id);
       if (sup > 0.5 && rng.chance(0.3)) {
         declared.add(X.id);
-        declareWar(world, X, Y, rel, m, sup, R);
+        if (playerDecides(world, X.id)) {
+          if (!asked(world, 'war', Y.id, WAR_RETRY_YEARS * DAYS_PER_YEAR)) proposeWar(world, X, Y, m, sup, strengths);
+        } else declareWar(world, X, Y, rel, m, sup, R);
         break;
       }
     }
@@ -391,27 +393,22 @@ export function diplomacyYearly(world: World, rng: Rng): void {
       continue;
     }
     if (world.day - war.start < DAYS_PER_YEAR) continue;
-    const ma = motives(world, A, { ...rel, status: 'contact' }, strengths[A.id], strengths[B.id]);
-    const mb = motives(world, B, { ...rel, status: 'contact' }, strengths[B.id], strengths[A.id]);
+    const sa = stillAtWar(world, war, 0, A, B, strengths);
+    const sb = stillAtWar(world, war, 1, B, A, strengths);
     const years = (world.day - war.start) / DAYS_PER_YEAR;
-    // exhaustion: years in the field and the dead
-    ma.total -= years * 0.15 + (war.deaths[0] / Math.max(10, A.nMen)) * 3;
-    mb.total -= years * 0.15 + (war.deaths[1] / Math.max(10, B.nMen)) * 3;
-    const sa = warSupport(world, A, ma, B.id);
-    const sb = warSupport(world, B, mb, A.id);
     const stale = war.actions === 0 && years >= 2;
     if (sa > 0.45 && sb > 0.45 && years < 15 && !stale) continue;
     // the side that wants peace more is the one suing for it
     const [winner, loser] = sa >= sb ? [A, B] : [B, A];
     const ratio = strengths[winner.id] / Math.max(0.01, strengths[loser.id]);
-    if (ratio >= 2 && Math.min(sa, sb) < 0.4 && !stale) {
-      endWar(world, war, rel, `${loser.pol.name}求和，向${winner.pol.name}称臣纳贡`);
-      rel.status = 'tribute';
-      rel.tributary = loser.id;
-      rel.since = world.day;
-    } else {
-      endWar(world, war, rel, stale ? '双方相距太远，战事不了了之' : `${loser.pol.name}（${howDecided(loser.pol)}）求和，双方议和`);
+    const tribute = ratio >= 2 && Math.min(sa, sb) < 0.4 && !stale;
+    const outcome = stale ? '双方相距太远，战事不了了之'
+      : tribute ? `${loser.pol.name}求和，向${winner.pol.name}称臣纳贡` : `${loser.pol.name}（${howDecided(loser.pol)}）求和，双方议和`;
+    if (involvesPlayer(A.id, B.id) && playerDecides(world, PLAYER) && !stale) {
+      if (!asked(world, 'peace', war.id, DAYS_PER_YEAR)) proposePeace(world, war, winner, loser, tribute, outcome, PLAYER === A.id ? sa : sb);
+      continue;
     }
+    makePeace(world, war, rel, tribute ? loser.id : -1, outcome);
   }
 
   revolts(world, rng, R);
@@ -485,10 +482,18 @@ function payTribute(world: World, rel: Relation, R: (Realm | undefined)[]): void
     `${payer.pol.name}向${lord.pol.name}缴纳贡赋：食物 ${paid.food.toFixed(0)}、工具 ${paid.tools.toFixed(1)}、衣物 ${paid.clothes.toFixed(1)}。`);
 }
 
-function declareWar(world: World, X: Realm, Y: Realm, rel: Relation, m: Motives, sup: number, R: (Realm | undefined)[]): void {
+const WAR_GOALS: War['goal'][] = ['raid', 'land', 'revenge', 'independence'];
+
+/** The attacker's main motive. */
+function mainGoal(m: Motives): War['goal'] {
   const goals: [War['goal'], number][] = [['raid', m.need], ['land', m.land], ['revenge', m.revenge], ['independence', m.freedom]];
   let goal = goals[0];
   for (const g of goals) if (g[1] > goal[1]) goal = g;
+  return goal[0];
+}
+
+function declareWar(world: World, X: Realm, Y: Realm, rel: Relation, m: Motives, sup: number, R: (Realm | undefined)[], chosen?: War['goal'], note = ''): void {
+  const goal: [War['goal']] = [chosen ?? mainGoal(m)];
   const broke = rel.status === 'peace' && world.day < rel.truceUntil;
   if (broke) X.pol.legitimacy = clamp(X.pol.legitimacy - 0.05, 0, 1);
   if (rel.status === 'tribute') rel.tributary = -1;
@@ -496,8 +501,8 @@ function declareWar(world: World, X: Realm, Y: Realm, rel: Relation, m: Motives,
   const l = personById(world, X.pol.leaderId);
   if (l) addBio(world, l, `率${X.pol.name}向${Y.pol.name}开战（${GOAL_NAMES[war.goal]}）`);
   addEvent(world, 'war', involvesPlayer(X.id, Y.id), `宣战：${X.pol.name} → ${Y.pol.name}`,
-    `${X.pol.name}${howDecided(X.pol)}向${Y.pol.name}开战（加权主战 ${Math.round(sup * 100)}%），主要动机：${GOAL_NAMES[war.goal]}。` +
-    `${broke ? '这违背了停战约定，首领威信受损。' : ''}`, l ? [l.id] : []);
+    `${X.pol.name}${note ? '' : howDecided(X.pol)}向${Y.pol.name}开战（加权主战 ${Math.round(sup * 100)}%），${note ? '目标' : '主要动机'}：${GOAL_NAMES[war.goal]}。` +
+    `${broke ? '这违背了停战约定，首领威信受损。' : ''}${note}`, l ? [l.id] : []);
   // allies of the defender come to its aid
   for (const ar of world.relations) {
     if (ar.status !== 'alliance' || (ar.a !== Y.id && ar.b !== Y.id)) continue;
@@ -518,6 +523,7 @@ function startWar(world: World, attacker: number, defender: number, goal: War['g
   const war: War = {
     id: world.warSeq++, attacker, defender, start: world.day, goal,
     deaths: [0, 0], loot: [0, 0], conquests: [0, 0], actions: 0, lastConquest: -DAYS_PER_YEAR, end: -1, outcome: '',
+    orders: [defaultOrders(), defaultOrders()],
   };
   world.wars.push(war);
   return war;
@@ -561,7 +567,7 @@ export function warMonthly(world: World, rng: Rng): void {
       const me = R[side === 0 ? war.attacker : war.defender];
       const them = R[side === 0 ? war.defender : war.attacker];
       if (!me || !them || war.end >= 0) break;
-      if (!rng.chance(side === 0 ? 0.12 : 0.06)) continue;
+      if (!rng.chance(side === 0 ? 0.12 : 0.06) || war.orders[side].hold) continue;
       campaign(world, rng, war, side, me, them, R);
     }
   }
@@ -570,11 +576,24 @@ export function warMonthly(world: World, rng: Rng): void {
 function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, them: Realm, R: (Realm | undefined)[]): void {
   const P = world.params;
   const range = P.campaignRange * (knows(world, me.id, 'chariot') ? 1.5 : 1);
-  // the nearest enemy settlement is the front
+  // the nearest enemy settlement is the front, unless ordered elsewhere
+  const orders = war.orders[side];
   let target: Settlement | undefined;
   let base: Settlement | undefined;
   let bd = Infinity;
-  for (const t of them.settlements) {
+  const ordered = them.settlements.find((t) => t.id === orders.target);
+  const nearest = (t: Settlement) => {
+    for (const s of me.settlements) {
+      const d = hexDistance(world.map.tiles[t.tile], world.map.tiles[s.tile]);
+      if (d < bd) {
+        bd = d;
+        target = t;
+        base = s;
+      }
+    }
+  };
+  if (ordered) nearest(ordered);
+  if (!target || bd > range) for (const t of them.settlements) {
     const tt = world.map.tiles[t.tile];
     for (const s of me.settlements) {
       const d = hexDistance(tt, world.map.tiles[s.tile]);
@@ -588,7 +607,7 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
   if (!target || !base || bd > range) return;
   war.actions++;
   const tile = world.map.tiles[target.tile];
-  const fullAtk = raise(world, rng, me, tile, range, 0.8);
+  const fullAtk = raise(world, rng, me, tile, range, orders.levy);
   const fullDef = raise(world, rng, them, tile, range * 0.5, 0.5, target.id);
   // without a clear edge, or when the motive is food, a small party raids instead of a pitched battle
   const raid = war.goal === 'raid' || me.hunger > 0.05 || fullAtk.value < fullDef.value * 2;
@@ -596,7 +615,8 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
   const def = raid ? raise(world, rng, them, tile, 0, 0, target.id) : fullDef;
   if (!atk.men.length) return;
   const A = atk.value * rng.range(0.75, 1.25) * (knows(world, me.id, 'chariot') ? 1.3 : 1);
-  const Dv = Math.max(0.1, def.value * rng.range(0.75, 1.25) * 1.2 * (knows(world, them.id, 'palisade') ? 1.5 : 1));
+  const dug = war.orders[1 - side].hold ? HOLD_DEFENCE : 1; // the enemy stands on the defensive
+  const Dv = Math.max(0.1, def.value * rng.range(0.75, 1.25) * 1.2 * dug * (knows(world, them.id, 'palisade') ? 1.5 : 1));
   const win = A > Dv;
   const scale = raid ? 0.35 : 1;
   const lossA = clamp(P.casualtyRate * clamp(Dv / A, 0.2, 3) * scale, 0, 0.6);
@@ -608,6 +628,8 @@ function campaign(world: World, rng: Rng, war: War, side: number, me: Realm, the
   // the fighters are away from their work, and some come home wounded
   const days = P.campaignDays;
   serve(world, rng, atk.men, raid ? days / 3 : days);
+  // calling up every man is resented
+  if (!raid && orders.levy >= 1) for (const p of atk.men) p.grievance = clamp(p.grievance + 0.05, 0, 1);
   serve(world, rng, def.men, raid ? 3 : days / 2);
   war.deaths[side] += deadA.length;
   war.deaths[1 - side] += deadD.length;
@@ -687,10 +709,12 @@ function stealFood(world: World, s: Settlement, frac: number): number {
  * A settlement changes hands with its land and people. The men and boys of the conquered people are
  * put to the sword; women and children of the victors' own people are spared and keep their culture.
  */
-function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Realm, R: (Realm | undefined)[]): void {
+function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Realm, R: (Realm | undefined)[], ceded = false): void {
   const lpol = loser.pol;
   const captured: Person[] = [];
-  const victims = world.people.filter((p) => p.settlement === s.id && p.sex === 1 && p.ethnicity !== winner.id && rng.chance(world.params.conquestMassacre));
+  // the player decides the fate of the men afterwards (a sack card); a ceded settlement is spared
+  const ask = !ceded && playerDecides(world, winner.id) && s.origin !== winner.id;
+  const victims = ceded || ask ? [] : world.people.filter((p) => p.settlement === s.id && p.sex === 1 && p.ethnicity !== winner.id && rng.chance(world.params.conquestMassacre));
   const slainLeader = victims.find((p) => p.role === 'leader');
   for (const p of victims) addBio(world, p, `${s.name}被${winner.pol.name}攻破`);
   bury(world, loser, victims, '城破后被屠杀');
@@ -702,7 +726,7 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
       p.role = 'none';
     }
     if (p.occ === OCC.admin) p.occ = OCC.gather;
-    p.grievance = clamp(p.grievance + 0.3, 0, 1);
+    p.grievance = clamp(p.grievance + (ceded ? 0.15 : 0.3), 0, 1);
     const sp = personById(world, p.spouseId);
     if (sp && sp.settlement !== s.id && world.settlements[sp.settlement].polity !== winner.id) {
       // separated by the new border
@@ -723,12 +747,13 @@ function conquer(world: World, rng: Rng, s: Settlement, winner: Realm, loser: Re
   s.chief = -1;
   const settlers = victims.length ? settle(world, s, winner) : 0;
   const gov = s.origin === winner.id ? undefined : appointGovernor(world, s);
-  addEvent(world, 'war', involvesPlayer(winner.id, loser.id), `征服：${s.name}归属${winner.pol.name}`,
-    `${s.name}（${s.pop} 人）被${winner.pol.name}征服${s.origin === winner.id ? '（收复故地）' : '，幸存的居民保留着自己的习俗，对新统治者心怀不满'}。` +
+  addEvent(world, 'war', involvesPlayer(winner.id, loser.id), `${ceded ? '割让' : '征服'}：${s.name}归属${winner.pol.name}`,
+    `${s.name}（${s.pop} 人）${ceded ? `由${lpol.name}割让给` : '被'}${winner.pol.name}${ceded ? '' : '征服'}${s.origin === winner.id ? '（收复故地）' : '，幸存的居民保留着自己的习俗，对新统治者心怀不满'}。` +
     `${victims.length ? `城中 ${victims.length} 名${lpol.name}男子被屠杀。` : ''}` +
     `${slainLeader ? `首领${slainLeader.name}被杀。` : captured.length ? `${lpol.name}的首领${captured[0].name}被俘。` : ''}` +
     `${settlers ? `${winner.pol.name}的 ${settlers} 名单身男子迁入，娶当地妇女为妻。` : ''}` +
     `${gov ? `${winner.pol.name}派${gov.name}镇守${s.name}。` : ''}`, captured.map((p) => p.id), s.id);
+  if (ask) proposeSack(world, s, winner, loser);
   if (!loser.settlements.length) {
     extinguish(world, lpol, `的最后一个聚落${s.name}被${winner.pol.name}攻占`);
     R[loser.id] = undefined;
@@ -1121,6 +1146,238 @@ export function resolveSecession(world: World, rng: Rng, d: Decision, choice: st
     addEvent(world, 'war', true, `强留失败：${s.name}`, `${ruler.pol.name}出兵想留住${s.name}，兵力不足被击退，${lost.length} 人战死，首领威信受损。`, [], s.id);
   }
   breakAway(world, rng, ruler, s, to);
+}
+
+// --- the player at war (DESIGN.md §15) ------------------------------------
+
+/** Usual share of men called up for a pitched battle. */
+const DEFAULT_LEVY = 0.8;
+/** Defence multiplier of a side standing on the defensive. */
+const HOLD_DEFENCE = 1.3;
+const WAR_RETRY_YEARS = 3;
+
+export function defaultOrders(): WarOrders {
+  return { target: -1, levy: DEFAULT_LEVY, hold: false };
+}
+
+/** Side `side`'s will to fight on: its motives, worn down by years in the field and the dead. */
+function stillAtWar(world: World, war: War, side: number, me: Realm, them: Realm, strengths: number[]): number {
+  const rel = relation(world, me.id, them.id)!;
+  const m = motives(world, me, { ...rel, status: 'contact' }, strengths[me.id], strengths[them.id]);
+  const years = (world.day - war.start) / DAYS_PER_YEAR;
+  m.total -= years * 0.15 + (war.deaths[side] / Math.max(10, me.nMen)) * 3;
+  return warSupport(world, me, m, them.id);
+}
+
+/** End a war; `payer` becomes the other's tributary (or -1). */
+function makePeace(world: World, war: War, rel: Relation, payer: number, outcome: string): void {
+  endWar(world, war, rel, outcome);
+  if (payer < 0) return;
+  rel.status = 'tribute';
+  rel.tributary = payer;
+  rel.since = world.day;
+}
+
+function proposeWar(world: World, X: Realm, Y: Realm, m: Motives, sup: number, strengths: number[]): void {
+  const goal = mainGoal(m);
+  propose(world, {
+    kind: 'war', settlement: -1, people: [X.pol.leaderId], auto: 'approve', data: [Y.id, WAR_GOALS.indexOf(goal)],
+    title: `掌权者主张对${Y.pol.name}开战`,
+    text: `${howDecided(X.pol)}，加权主战 ${Math.round(sup * 100)}%，主要动机：${GOAL_NAMES[goal]}。` +
+      `我方军力约 ${strengths[X.id].toFixed(0)}，${Y.pol.name}约 ${strengths[Y.id].toFixed(0)}。`,
+    options: [
+      { id: 'approve', name: '开战', desc: `向${Y.pol.name}宣战（${GOAL_NAMES[goal]}）。出征的人离家不能劳动，会有伤亡。` },
+      {
+        id: 'reject', name: '压下',
+        desc: `不打。合法性约 −${Math.round(world.params.decreeCost * (0.1 + sup - 0.5) * 100)}%，主战的人不满，战争思潮降温；${WAR_RETRY_YEARS} 年内不会再提。`,
+      },
+    ],
+  });
+}
+
+function proposePeace(world: World, war: War, winner: Realm, loser: Realm, tribute: boolean, outcome: string, mine: number): void {
+  const weWin = winner.id === PLAYER;
+  const enemy = weWin ? loser : winner;
+  const terms = tribute ? (weWin ? `${loser.pol.name}向我们称臣纳贡` : `我们向${winner.pol.name}称臣纳贡`) : '双方停战，各守原界';
+  propose(world, {
+    kind: 'peace', settlement: -1, people: [], auto: 'accept', data: [war.id, tribute ? loser.id : -1],
+    title: `与${enemy.pol.name}议和`,
+    text: `${outcome}。条件：${terms}。我方仍主战的加权比例 ${Math.round(mine * 100)}%；已阵亡 ${war.deaths[war.attacker === PLAYER ? 0 : 1]} 人。`,
+    options: [
+      { id: 'accept', name: '接受', desc: `${terms}，${TRUCE_YEARS} 年内不再开战。` },
+      {
+        id: 'refuse', name: '继续打',
+        desc: mine < 0.45 ? `我们自己的人也打累了：合法性约 −${Math.round(world.params.decreeCost * (0.1 + 0.45 - mine) * 100)}%，厌战的人不满上升。一年内不再议和。` : '一年内不再议和。',
+      },
+    ],
+  });
+}
+
+function proposeSack(world: World, s: Settlement, winner: Realm, loser: Realm): void {
+  const men = world.people.filter((p) => p.settlement === s.id && p.sex === 1 && p.ethnicity !== winner.id).length;
+  propose(world, {
+    kind: 'sack', settlement: s.id, people: [], auto: world.params.conquestMassacre >= 0.5 ? 'sack' : 'spare', data: [loser.id],
+    title: `攻破${s.name}，如何处置城中男子`,
+    text: `${s.name}（${s.pop} 人）被我们攻破，城里还有 ${men} 名${loser.pol.name}男子。`,
+    options: [
+      { id: 'sack', name: '屠城', desc: '杀掉城中所有异族男子，我们的单身男子迁入娶当地妇女。以后不会有人起来反抗，但两国结下血仇。' },
+      { id: 'spare', name: '安抚', desc: '只派镇守，不杀人。当地不满稍降，但男人都还在，可能起义回归故国。' },
+    ],
+  });
+}
+
+/** Answers to war, peace and sack cards; run on the whole world. */
+export function resolveWarCard(world: World, d: Decision, choice: string): void {
+  const R = realms(world);
+  const me = R[PLAYER];
+  if (!me) return;
+  if (d.kind === 'war') {
+    const Y = R[d.data[0]];
+    const rel = Y && relation(world, PLAYER, Y.id);
+    if (!Y || !rel || rel.status === 'war' || rel.status === 'none') return;
+    const st = R.map((r) => (r ? strength(world, r) : 0));
+    const m = motives(world, me, rel, st[PLAYER], st[Y.id]);
+    const sup = warSupport(world, me, m, Y.id);
+    if (choice === 'approve') {
+      declareWar(world, me, Y, rel, m, sup, R, WAR_GOALS[d.data[1]]);
+      return;
+    }
+    const cost = world.params.decreeCost * (0.1 + clamp(sup - 0.5, 0, 1));
+    me.pol.legitimacy = clamp(me.pol.legitimacy - cost, 0, 1);
+    me.pol.warMood = clamp(me.pol.warMood - 0.2, -1, 1);
+    for (const p of me.adults) if (personalHawk(world, p) > 0.3) p.grievance = clamp(p.grievance + 0.05, 0, 1);
+    addEvent(world, 'war', false, `压下战事：${Y.pol.name}`, `掌权者想对${Y.pol.name}开战，被压了下来。合法性 −${Math.round(cost * 100)}%。`);
+    return;
+  }
+  if (d.kind === 'peace') {
+    const war = world.wars.find((w) => w.id === d.data[0] && w.end < 0);
+    if (!war) return;
+    const rel = relation(world, war.attacker, war.defender)!;
+    const enemy = R[war.attacker === PLAYER ? war.defender : war.attacker];
+    if (choice === 'accept' || !enemy) {
+      const payer = d.data[1] >= 0 && R[d.data[1]] ? d.data[1] : -1;
+      const other = enemy?.pol.name ?? '对方';
+      makePeace(world, war, rel, payer,
+        payer === PLAYER ? `${me.pol.name}接受条件，向${other}称臣纳贡` : payer >= 0 ? `${other}求和，向${me.pol.name}称臣纳贡` : '双方议和');
+      return;
+    }
+    const st = R.map((r) => (r ? strength(world, r) : 0));
+    const mine = stillAtWar(world, war, war.attacker === PLAYER ? 0 : 1, me, enemy, st);
+    if (mine < 0.45) {
+      const cost = world.params.decreeCost * (0.1 + 0.45 - mine);
+      me.pol.legitimacy = clamp(me.pol.legitimacy - cost, 0, 1);
+      for (const p of me.adults) if (personalHawk(world, p) < 0) p.grievance = clamp(p.grievance + 0.05, 0, 1);
+    }
+    addEvent(world, 'war', false, `拒绝议和：${enemy.pol.name}`, `${me.pol.name}拒绝议和，战争继续。`);
+    return;
+  }
+  // sack
+  const s = world.settlements[d.settlement];
+  if (!s?.alive || s.polity !== PLAYER || s.origin === PLAYER) return;
+  const loser = polityOf(world, d.data[0]);
+  if (choice === 'sack') {
+    const victims = world.people.filter((p) => p.settlement === s.id && p.sex === 1 && p.ethnicity !== PLAYER);
+    bury(world, me, victims, '城破后被屠杀');
+    const settlers = settle(world, s, me);
+    const rel = relation(world, PLAYER, d.data[0]);
+    if (rel) addGrudge(rel, d.data[0], 0.3);
+    addEvent(world, 'war', false, `屠城：${s.name}`, `${s.name}城中 ${victims.length} 名${loser.name}男子被杀。${settlers ? `${settlers} 名单身男子迁入。` : ''}`, [], s.id);
+  } else {
+    for (const p of world.people) if (p.settlement === s.id) p.grievance = clamp(p.grievance - 0.15, 0, 1);
+    addEvent(world, 'war', false, `安抚：${s.name}`, `${me.pol.name}没有屠杀${s.name}的居民，只派人镇守。`, [], s.id);
+  }
+}
+
+/** The player declares war on a neighbour. Without the backing of those in power it costs legitimacy and morale. */
+export function playerDeclare(world: World, target: number, goal: 'raid' | 'land'): void {
+  const R = realms(world);
+  const X = R[PLAYER];
+  const Y = R[target];
+  const rel = relation(world, PLAYER, target);
+  if (!X || !Y || !rel || rel.status === 'none' || rel.status === 'war') return;
+  const reach = world.params.campaignRange * (knows(world, PLAYER, 'chariot') ? 1.5 : 1);
+  if (minDistance(world, X, Y) > reach) {
+    addEvent(world, 'war', true, `鞭长莫及：${Y.pol.name}`, `${Y.pol.name}离我们太远，军队够不着，宣战作罢。`);
+    return;
+  }
+  const st = R.map((r) => (r ? strength(world, r) : 0));
+  const m = motives(world, X, rel, st[PLAYER], st[target]);
+  const sup = warSupport(world, X, m, target);
+  let note = '';
+  if (rel.status === 'alliance') {
+    X.pol.legitimacy = clamp(X.pol.legitimacy - 0.1, 0, 1);
+    note += '背弃盟约，首领威信大损。';
+  }
+  if (sup < 0.5) {
+    const cost = world.params.decreeCost * (0.1 + 0.5 - sup);
+    X.pol.legitimacy = clamp(X.pol.legitimacy - cost, 0, 1);
+    X.pol.warMood = clamp(X.pol.warMood - 0.3, -1, 1);
+    note += `这是一场不得人心的战争：合法性 −${Math.round(cost * 100)}%，士气低落。`;
+  }
+  declareWar(world, X, Y, rel, m, sup, R, goal, note || '奉国家意志出兵。');
+}
+
+export function playerOrders(world: World, warId: number, orders: WarOrders): void {
+  const war = world.wars.find((w) => w.id === warId && w.end < 0);
+  if (!war || (war.attacker !== PLAYER && war.defender !== PLAYER)) return;
+  war.orders[war.attacker === PLAYER ? 0 : 1] = { target: orders.target, levy: clamp(orders.levy, 0.2, 1), hold: !!orders.hold };
+}
+
+/** Will the enemy take these terms? Its will to fight against how hard they are. */
+export function peaceAccepted(world: World, war: War, terms: PeaceTerms): { ok: boolean; enemyWill: number; ratio: number } {
+  const R = realms(world);
+  const side = war.attacker === PLAYER ? 0 : 1;
+  const me = R[PLAYER];
+  const enemy = R[side === 0 ? war.defender : war.attacker];
+  if (!me || !enemy) return { ok: true, enemyWill: 0, ratio: 1 };
+  const st = R.map((r) => (r ? strength(world, r) : 0));
+  const will = stillAtWar(world, war, 1 - side, enemy, me, st);
+  const ratio = st[PLAYER] / Math.max(0.01, st[enemy.id]);
+  const ok = terms === 'submit' ? true
+    : terms === 'white' ? will < 0.5
+    : terms === 'tribute' ? will < 0.4 && ratio >= 1.5
+    : will < 0.35 && ratio >= 1.5 && enemy.settlements.length > 1;
+  return { ok, enemyWill: will, ratio };
+}
+
+export const TERMS_NAMES: Record<PeaceTerms, string> = { white: '停战', tribute: '要求称臣', cede: '要求割地', submit: '我方称臣' };
+
+export function playerPeace(world: World, rng: Rng, warId: number, terms: PeaceTerms): void {
+  const war = world.wars.find((w) => w.id === warId && w.end < 0);
+  if (!war || (war.attacker !== PLAYER && war.defender !== PLAYER)) return;
+  const R = realms(world);
+  const me = R[PLAYER];
+  const enemy = R[war.attacker === PLAYER ? war.defender : war.attacker];
+  const rel = relation(world, war.attacker, war.defender)!;
+  if (!me || !enemy) return;
+  const { ok, enemyWill } = peaceAccepted(world, war, terms);
+  if (!ok) {
+    addEvent(world, 'war', true, `求和被拒：${enemy.pol.name}`, `${enemy.pol.name}拒绝了「${TERMS_NAMES[terms]}」的条件（对方仍主战 ${Math.round(enemyWill * 100)}%）。`);
+    return;
+  }
+  if (terms === 'cede') {
+    // the enemy settlement nearest to ours, never its capital
+    let pick: Settlement | undefined;
+    let bd = Infinity;
+    for (const t of enemy.settlements) {
+      if (t.id === enemy.pol.capital) continue;
+      for (const s of me.settlements) {
+        const d = hexDistance(world.map.tiles[t.tile], world.map.tiles[s.tile]);
+        if (d < bd) {
+          bd = d;
+          pick = t;
+        }
+      }
+    }
+    if (pick) {
+      makePeace(world, war, rel, -1, `${enemy.pol.name}割让${pick.name}求和`);
+      conquer(world, rng, pick, me, enemy, R, true);
+      return;
+    }
+  }
+  if (terms === 'submit') me.pol.legitimacy = clamp(me.pol.legitimacy - 0.1, 0, 1);
+  makePeace(world, war, rel, terms === 'tribute' ? enemy.id : terms === 'submit' ? PLAYER : -1,
+    terms === 'tribute' ? `${enemy.pol.name}答应称臣纳贡` : terms === 'submit' ? `${me.pol.name}向${enemy.pol.name}称臣纳贡求和，首领威信受损` : '双方停战，各守原界');
 }
 
 // --- interface for the rest of the simulation --------------------------

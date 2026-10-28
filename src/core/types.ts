@@ -334,9 +334,15 @@ export type Command =
   /** Decrees: change an institution outright; open the granary to a settlement; exempt one from tax. */
   | { day: number; type: 'decree'; dim: number; opt: number }
   | { day: number; type: 'relief'; settlement: number }
-  | { day: number; type: 'exempt'; settlement: number; years: number };
+  | { day: number; type: 'exempt'; settlement: number; years: number }
+  /** War: declare on a neighbour; set our side's orders in a war; offer peace terms. */
+  | { day: number; type: 'declare'; target: number; goal: 'raid' | 'land' }
+  | { day: number; type: 'orders'; war: number; orders: WarOrders }
+  | { day: number; type: 'peace'; war: number; terms: PeaceTerms };
 
-export type DecisionKind = 'secession' | 'skim' | 'famine' | 'reform';
+export type PeaceTerms = 'white' | 'tribute' | 'cede' | 'submit';
+
+export type DecisionKind = 'secession' | 'skim' | 'famine' | 'reform' | 'war' | 'peace' | 'sack';
 
 /**
  * A moment where the state (the player) must choose: raised by the simulation where it would otherwise
@@ -355,7 +361,10 @@ export interface Decision {
   options: { id: string; name: string; desc: string }[];
   /** What the state would do left to itself (what NPC polities do). */
   auto: string;
-  /** Kind-specific: secession [polity to join or -1]; reform [dim, new option, old option]. */
+  /**
+   * Kind-specific: secession [polity to join or -1]; reform [dim, new option, old option];
+   * war [target polity, goal index]; peace [war id, tribute payer or -1]; sack [defeated polity].
+   */
   data: number[];
 }
 
@@ -446,6 +455,17 @@ export interface War {
   /** Day the war ended, or -1 while ongoing. */
   end: number;
   outcome: string;
+  /** Standing orders of [attacker, defender] (the player sets its own side's; NPCs keep the defaults). */
+  orders: WarOrders[];
+}
+
+export interface WarOrders {
+  /** Enemy settlement to attack, or -1 for the nearest. */
+  target: number;
+  /** Share of the men within reach called up for a pitched battle (0.4 light, 0.8 usual, 1 all). */
+  levy: number;
+  /** Stay on the defensive: no campaigns, stronger defence. */
+  hold: boolean;
 }
 
 export interface World {
